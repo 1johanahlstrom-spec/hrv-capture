@@ -59,7 +59,7 @@ const GRAPH_DELAY = 2.5;
 
 // Capture-state — råa kanalmedel + timestamps (det som går till native). Inga DSP-buffrar.
 let raw = [], rawG = [], rawB = [], ts = [];
-let fps = 30, t0 = 0, stm = null, wl = null, fired = false, lastGraph = 0;
+let fps = 30, t0 = 0, stm = null, wl = null, fired = false;
 
 function log(m) { LOG.textContent += m + '\n'; }
 
@@ -105,19 +105,34 @@ function detrend(s, windowSec, fsv) {
   return out;
 }
 
+// Glidande amplitud-skala (långsam decay) → linjen studsar EJ vertikalt mellan bilder.
+let waveAmp = 1;
+// Canvas-storlek sätts EN gång (clientWidth/height ändras ej under mätning) → undvik
+// per-bild-reset som annars rensar/omskalar och bidrar till hack.
+let waveInit = false;
+function ensureWaveSize() {
+  if (waveInit) return;
+  const dp = devicePixelRatio || 1;
+  WAVE.width = WAVE.clientWidth * dp; WAVE.height = WAVE.clientHeight * dp;
+  WAVE.getContext('2d').scale(dp, dp);
+  waveInit = true;
+}
+
 // Rita rullande pulsvågform (lånat utseende från webbappens drawWaveform, UTAN peaks).
 function drawWave(filtered) {
-  const w = WAVE.clientWidth, h = WAVE.clientHeight, dp = devicePixelRatio || 1;
-  WAVE.width = w * dp; WAVE.height = h * dp;
-  const g2 = WAVE.getContext('2d'); g2.scale(dp, dp); g2.clearRect(0, 0, w, h);
+  ensureWaveSize();
+  const w = WAVE.clientWidth, h = WAVE.clientHeight;
+  const g2 = WAVE.getContext('2d'); g2.clearRect(0, 0, w, h);
   g2.strokeStyle = '#00f0820a'; g2.lineWidth = .5;
   for (let y = 0; y < h; y += 20) { g2.beginPath(); g2.moveTo(0, y); g2.lineTo(w, y); g2.stroke(); }
   const vl = Math.min(filtered.length, Math.floor(w * 2));
   if (vl < 2) return;
   const vs = filtered.slice(-vl);
+  // Stabil skala: glid mot max med långsam decay (snabb upp, långsam ner) → ingen vertikal studs.
   let am = 0; for (let i = 0; i < vs.length; i++) { const a = Math.abs(vs[i]); if (a > am) am = a; }
   am = am || 1;
-  const tx = i => (i / (vl - 1)) * w, ty = v => h / 2 - (v / am) * (h * .4);
+  waveAmp = am > waveAmp ? am : waveAmp * 0.95 + am * 0.05;
+  const tx = i => (i / (vl - 1)) * w, ty = v => h / 2 - (v / waveAmp) * (h * .4);
   g2.beginPath(); for (let i = 0; i < vs.length; i++) i ? g2.lineTo(tx(i), ty(vs[i])) : g2.moveTo(tx(i), ty(vs[i]));
   g2.lineTo(w, h); g2.lineTo(0, h); g2.closePath();
   const grad = g2.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, '#00f08212'); grad.addColorStop(1, '#00f08200');
@@ -127,10 +142,10 @@ function drawWave(filtered) {
   g2.stroke(); g2.shadowBlur = 0;
 }
 
-// Throttlad graf-uppdatering (~7fps). Filtrerar de senaste ~900 sampel — capture-loopen
-// (59fps) berörs EJ; rå R/G/B går oförändrat till native.
+// Graf-uppdatering på EGEN jämn timer (se startGraphLoop) — frikopplad från capture-loopens
+// jitter. Filtrerar de senaste ~900 sampel; capture-loopen (59fps) + rå R/G/B → native orörda.
 function updateGraph() {
-  if (raw.length < fps * 2) return;
+  if (raw.length < fps * GRAPH_DELAY) return;
   const N = Math.min(raw.length, 900), off = raw.length - N;
   const combined = new Float64Array(N);
   for (let i = 0; i < N; i++) combined[i] = raw[off + i] * 0.4 + rawG[off + i] * 0.6;
@@ -153,7 +168,18 @@ async function start() {
   V.srcObject = stm; await V.play();
   STOP.style.display = 'block';
   t0 = performance.now();
+  startGraphLoop();
   requestAnimationFrame(tick);
+}
+
+// Egen jämn graf-timer (~15fps, fast intervall) — frikopplad från capture-loopens jitter.
+// Stannar när mätningen avslutas (fired).
+let graphTimer = null;
+function startGraphLoop() {
+  graphTimer = setInterval(() => {
+    if (fired) { clearInterval(graphTimer); graphTimer = null; return; }
+    updateGraph();
+  }, 66);
 }
 
 // Per-frame: central 24×16 ROI → R/G/B-medel (UNCHANGED — exakt vad native får).
@@ -172,12 +198,8 @@ function tick() {
     if (ts.length > 60) { const l = ts.slice(-60); fps = 1e3 / ((l[l.length - 1] - l[0]) / (l.length - 1)); }
   }
 
-  // Live-graf — jämn takt (~16fps) för mjuk rörelse. Börjar rita först GRAPH_DELAY s in i
-  // capturen så filter-edge-transienten (stora initiala peaken vid filtrets kallstart) hinner
-  // passera ut ur det visade fönstret innan grafen blir synlig.
-  const nowMs = performance.now();
-  if (raw.length > fps * GRAPH_DELAY && nowMs - lastGraph > 60) { lastGraph = nowMs; updateGraph(); }
-
+  // (Live-grafen ritas EJ här — den körs på en egen jämn timer, startGraphLoop, frikopplad
+  // från capture-loopens timing-jitter för mjuk rörelse.)
   BIG.textContent = ok ? Math.floor(elapsed) + 's' : (rA < 5 ? '✗ ingen signal' : 'placera finger');
   SUB.textContent = ok ? 'mäter — håll fingret stilla' : 'lägg fingret över kameran';
   if (elapsed >= DUR) { finish(); return; }   // auto-stopp 60s (backup)
