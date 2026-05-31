@@ -1,0 +1,22 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.johan.hrvmonitor",
+      "sha256_cert_fingerprints": [
+        "41:19:8F:D0:B9:17:2A:7D:31:4B:D6:35:2F:7D:1A:F4:18:33:16:F5:6C:F4:04:B3:4F:D1:40:4A:69:CA:2F:F9"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.use_as_origin"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.johan.hrvmonitor",
+      "sha256_cert_fingerprints": [
+        "41:19:8F:D0:B9:17:2A:7D:31:4B:D6:35:2F:7D:1A:F4:18:33:16:F5:6C:F4:04:B3:4F:D1:40:4A:69:CA:2F:F9"
+      ]
+    }
+  }
+]

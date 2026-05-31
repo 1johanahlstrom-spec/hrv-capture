@@ -1,0 +1,10 @@
+# Capture-only HRV-motor (privat källa → Netlify-deploy). Headers: assetlinks måste
+# serveras som application/json för DAL; capture-sidan no-cache så ny version alltid laddas.
+[[headers]]
+  for = "/.well-known/assetlinks.json"
+  [headers.values]
+    Content-Type = "application/json"
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store"
