@@ -6,8 +6,8 @@
   #big{font-size:30px;font-weight:bold}
   #sub{font-size:13px;color:#8a8f98;margin-top:4px}
   #log{font-size:11px;color:#5a6a5a;white-space:pre-wrap;margin-top:10px}
-  /* Redirect-robusthet (item #1-fix): tappbar resultat-länk vid mätslut → färsk user-gesture
-     så Chrome dispatchar hrvresult:// pålitligt (auto-fyr utan gest är flaky). */
+  /* Redirect-robusthet: tappbar resultat-länk vid mätslut → färsk user-gesture så Chrome
+     dispatchar hrvresult:// pålitligt (auto-fyr utan gest är flaky efter 60s). */
   #resultBtn{display:none;margin-top:22px;padding:20px 16px;background:#00F082;color:#08090C;
     font-size:22px;font-weight:bold;text-align:center;text-decoration:none;border-radius:14px}
   video{width:120px;height:90px;border:1px solid #222;margin-top:10px}
@@ -15,30 +15,27 @@
 </style></head>
 <body>
 <div id="big">startar…</div>
-<div id="sub">capture-motor (Väg B) — host äger torch</div>
+<div id="sub">capture-motor — host äger torch</div>
 <a id="resultBtn" href="#">Visa resultat →</a>
 <div id="log"></div>
 <video id="V" autoplay playsinline muted></video>
 <canvas id="C" width="32" height="24"></canvas>
 
-<script type="module">
+<script>
 // ════════════════════════════════════════════════════════════════════════
-// HRV CAPTURE-MOTOR (capture-only) — produktifiering steg 2, item #1.
+// HRV CAPTURE-MOTOR (capture-only, PRODUKTION) — IP-skyddad arkitektur.
 //
-// "Webben = osynlig capture-motor": denna sida har INGET resultat-UI. Den
-// kör EXAKT samma DSP-pipeline som den fulla webb-appen (app.js tick(),
-// bit-för-bit via dsp.js) headless, och vid mätslut NAVIGERAR den till
-// custom-scheme hrvresult:// med RR-listan (extractRRI-utdata). Chrome (TWA)
-// avfyrar den externa intenten → native BridgeResultActivity tar emot,
-// kör HRVMetrics.compute + qualityOf (den ärliga gaten är native IP) och
-// ritar Compose-resultatet.
+// Denna sida kör BARA: getUserMedia + per-frame R/G/B-kanalmedel (central 24×16 ROI) +
+// gzip → hrvresult://raw. INGEN DSP, INGEN dsp.js-import, inga HRV-utdata. ALL signal-
+// behandling (detrend/Butterworth/peak-detektion/SQI/gate/RR/metriker = IP) körs NATIVE
+// i APK:n via RawPayloadCodec → SignalProcessor. "Webben = osynlig, IP-fattig capture-motor."
 //
-// TORCH: host-FG-service äger torch (setTorchMode Order 1, FÖRE getUserMedia).
-// Sidan begär ALDRIG torch själv (JS-torch kräver gest + funkar ej på denna
-// S22+ Chrome — hela projektets fynd). Vi mäter bara rMean som torch-proof.
+// Generisk W3C: getUserMedia + canvas-medel + CompressionStream — noll proprietär logik här.
+// (Dev/paritets-orakel med dsp.js + w*-fält bor i HRV-repots _twacap_raw.html, localhost.)
+//
+// TORCH: host-FG-service äger torch (setTorchMode Order 1, FÖRE getUserMedia). Sidan begär
+// ALDRIG torch själv (JS-torch kräver gest + funkar ej på S22+ Chrome). rMean = torch-proof.
 // ════════════════════════════════════════════════════════════════════════
-import { D } from './js/dsp.js';
-
 const BIG = document.getElementById('big');
 const SUB = document.getElementById('sub');
 const LOG = document.getElementById('log');
@@ -46,21 +43,17 @@ const V   = document.getElementById('V');
 const C   = document.getElementById('C');
 const cx  = C.getContext('2d', { willReadFrequently: true });
 
-// Mät-parametrar — speglar app.js (SETTLE 3s, DUR 60s). Host-FGS-fönstret är
-// 65s, så 60s lämnar marginal innan torch släcks.
+// SETTLE 3s (hoppa AE-warmup), DUR 60s. Host-FGS-fönstret är 65s → 60s lämnar marginal.
 const SETTLE = 3, DUR = 60;
 
-// Pipeline-state (samma namn/roller som app.js)
+// Capture-state — BARA råa kanalmedel + timestamps. Inga DSP-buffrar.
 let raw = [], rawG = [], rawB = [], ts = [];
-let flt = [], pks = [], rri = [], hrv = null;
-let sqi = 0, sqiHist = [], co = null;
 let fps = 30, t0 = 0, stm = null, wl = null, fired = false;
 
 function log(m) { LOG.textContent += m + '\n'; }
 
 async function start() {
   try { wl = await navigator.wakeLock.request('screen'); } catch (_) {}
-  // Samma getUserMedia-config som app.js/_twacap: bakkamera, 160×120, 60fps-ideal.
   const cfgs = [
     { facingMode: 'environment', width: { ideal: 160 }, height: { ideal: 120 }, frameRate: { ideal: 60, min: 30 } },
     { facingMode: 'environment' }, true,
@@ -70,61 +63,41 @@ async function start() {
     catch (e) { if (i === cfgs.length - 1) { BIG.textContent = 'getUserMedia FAIL ' + e.name; return; } }
   }
   const tk = stm.getVideoTracks()[0], se = tk.getSettings();
-  fps = se.frameRate || 30; co = D.bp4(fps, 0.5, 4);
+  fps = se.frameRate || 30;
   SUB.textContent = 'capturar ' + (se.width || '?') + 'x' + (se.height || '?') + '@' + Math.round(fps) + ' — host-torch';
   V.srcObject = stm; await V.play();
   t0 = performance.now();
   requestAnimationFrame(tick);
 }
 
-// Headless spegling av app.js tick() — DSP körs på hela bufferten varje frame
-// (app.js är ej inkrementell: flt = D.ff(detrend(hela combined)) per tick), så
-// rri/hrv är alltid de slutgiltiga vid mätslut.
+// Per-frame: central 24×16 ROI → R/G/B-medel. INGEN DSP (det gör native på rå strömmen).
 function tick() {
   if (!stm) return;
   cx.drawImage(V, 0, 0, 32, 24);
-  const px = cx.getImageData(4, 4, 24, 16).data;       // central 24×16 ROI (= app.js)
+  const px = cx.getImageData(4, 4, 24, 16).data;       // central 24×16 (= app.js-ROI)
   let rS = 0, gS = 0, bS = 0, n = 0;
   for (let i = 0; i < px.length; i += 4) { rS += px[i]; gS += px[i + 1]; bS += px[i + 2]; n++; }
   const rA = rS / n, gA = gS / n, bA = bS / n;
   const ok = rA > 100 && rA > bA * 1.3 && rA > gA * 1.05;   // finger-OK-gate (= app.js)
 
   const elapsed = (performance.now() - t0) / 1e3;
-  const settling = elapsed < SETTLE;
-
-  if (ok && !settling) {
+  if (ok && elapsed >= SETTLE) {
     raw.push(rA); rawG.push(gA); rawB.push(bA); ts.push(performance.now());
+    // glidande fps-uppskattning (samma som app.js) — bärs i payloaden, native använder den
     if (ts.length > 60) {
       const l = ts.slice(-60);
-      fps = 1e3 / ((l[l.length - 1] - l[0]) / (l.length - 1)); co = D.bp4(fps, 0.5, 4);
-    }
-    if (raw.length > fps * 2) {
-      const combined = new Float64Array(raw.length);
-      for (let i = 0; i < raw.length; i++) combined[i] = raw[i] * 0.4 + rawG[i] * 0.6;
-      const detrended = D.detrend(combined, 2, fps);
-      flt = Array.from(D.ff(detrended, co));
-      const motionClean = D.detectMotion(rawB, fps, 0.5);
-      pks = D.fp(flt, Math.round(fps * 0.45));
-      const sqiResult = D.sq(flt, pks, fps);
-      sqi = sqiResult.score; sqiHist.push(sqi); if (sqiHist.length > 5) sqiHist.shift();
-      if (pks.length >= 3) {
-        rri = D.extractRRI(flt, pks, ts, sqiResult, motionClean);
-        hrv = D.hrv(rri);
-      }
+      fps = 1e3 / ((l[l.length - 1] - l[0]) / (l.length - 1));
     }
   }
 
   BIG.textContent = 'R=' + rA.toFixed(0) + (rA > 100 ? ' ✓' : rA < 5 ? ' ✗SVART' : '')
-    + '  ' + Math.floor(elapsed) + 's' + (hrv ? '  ~' + hrv.bpm + ' bpm' : '');
+    + '  ' + Math.floor(elapsed) + 's  (' + raw.length + 'f)';
   if (elapsed >= DUR) { finish(); return; }
   requestAnimationFrame(tick);
 }
 
-// ── RAW-BRYGGA (native-DSP-spike, productize/twa-chain) ──
-// gzip+base64url av HELA capture-strömmen (R/G/B + relativa timestamps). Native kör
-// SignalProcessor på detta → ALL DSP-IP native; serverad JS = bara getUserMedia +
-// kanalmedel (generisk W3C, noll IP). CompressionStream('gzip') = inbyggt i Chrome (ingen
-// lib). base64url = URL-säker, ingen padding (java.util.Base64.getUrlDecoder native).
+// gzip+base64url av rå capture-ström. CompressionStream = inbyggt i Chrome (ingen lib).
+// base64url = URL-säker, ingen padding (native java.util.Base64.getUrlDecoder).
 async function gzipB64url(text) {
   const cs = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
   const ab = await new Response(cs).arrayBuffer();
@@ -135,45 +108,31 @@ async function gzipB64url(text) {
   return { b64: btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''), gz: bytes.length };
 }
 
-// Mätslut → bygg RAW deep-link (gzippad R/G/B) + webb-referens (dsp.js parallellt för
-// paritet-logg). Async (await gzip) innan tap-knappens href sätts.
+// Mätslut → gzippa rå R/G/B/T → hrvresult://raw. Ingen DSP, inga w*-fält (native räknar allt).
 async function finish() {
   if (fired) return; fired = true;
   if (stm) { stm.getTracks().forEach(t => t.stop()); stm = null; }
   if (wl) { try { wl.release(); } catch (_) {} wl = null; }
 
-  // RÅ capture-ström — 3-decimals kanalmedel + relativa timestamps (ms). INGEN DSP-utdata.
-  // Linje-format "R\nG\nB\nT" (ej JSON → native parsar utan org.json, ren-JVM-testbart).
+  // Rå capture-ström: 3-decimals kanalmedel + relativa timestamps (ms). Linje-format
+  // "R\nG\nB\nT" (ej JSON → native parsar utan org.json). checksum = round-trip-verifiering.
   const t0r = ts.length ? ts[0] : 0;
   const R = raw.map(x => Math.round(x * 1000) / 1000);
   const G = rawG.map(x => Math.round(x * 1000) / 1000);
   const B = rawB.map(x => Math.round(x * 1000) / 1000);
   const T = ts.map(x => Math.round((x - t0r) * 1000) / 1000);
   const n = R.length;
-  // checksum (f64, per-kanal komplett summa sen adderad) → native matchar = round-trip värde-exakt
   const csum = Math.round(
     R.reduce((a, b) => a + b, 0) + G.reduce((a, b) => a + b, 0) + B.reduce((a, b) => a + b, 0));
   const payload = R.join(',') + '\n' + G.join(',') + '\n' + B.join(',') + '\n' + T.join(',');
 
-  // webb-referens: dsp.js körd LIVE på SAMMA R/G/B → end-to-end-paritet-orakel i native-logg.
-  // Prod-utbyggnaden (utfall A) tar bort dsp.js härifrån; nu kvar BARA som paritets-referens.
-  const wrri = (rri || []).map(x => Math.round(x)).join(',');
-  const w = hrv
-    ? '&wbpm=' + hrv.bpm + '&wrmssd=' + hrv.rmssd + '&wsdnn=' + hrv.sdnn
-      + '&wpnn50=' + hrv.pnn50 + '&wmean=' + hrv.meanRR + '&wcount=' + hrv.count
-      + '&wpeaks=' + (pks ? pks.length : 0)
-    : '';
-
   BIG.textContent = 'Komprimerar ' + n + ' frames…';
   const enc = await gzipB64url(payload);
-  const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum
-    + '&fps=' + fps.toFixed(2) + '&wrri=' + wrri + w;
+  const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2);
 
-  // REDIRECT-ROBUSTHET (item #1-fix): tappbar länk = färsk user-gesture → Chrome dispatchar
-  // hrvresult:// 100% (auto location.href flaky efter 60s). <a href> = browser-nativ launch.
-  log('payload n=' + n + ' raw=' + payload.length + 'B gz=' + enc.gz + 'B b64=' + enc.b64.length + 'B csum=' + csum);
-  BIG.textContent = 'Klar — ' + n + ' frames (' + (enc.b64.length / 1024 | 0) + ' KB) → native DSP';
-  SUB.textContent = 'Tryck för native DSP-resultat ↓';
+  log('payload n=' + n + ' gz=' + enc.gz + 'B b64=' + enc.b64.length + 'B csum=' + csum);
+  BIG.textContent = 'Klar — ' + n + ' frames (' + (enc.b64.length / 1024 | 0) + ' KB)';
+  SUB.textContent = 'Tryck för ditt resultat ↓';
   const btn = document.getElementById('resultBtn');
   btn.setAttribute('href', url);
   btn.style.display = 'block';
