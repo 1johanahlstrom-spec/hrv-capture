@@ -53,6 +53,9 @@ const STOP = document.getElementById('stopBtn');
 const cx   = C.getContext('2d', { willReadFrequently: true });
 
 const SETTLE = 3, DUR = 60;
+// Grafen börjar ritas först GRAPH_DELAY s efter capture-start (utöver SETTLE) så filter-
+// kallstarts-transienten (stora initiala peaken) hinner passera ut ur det visade fönstret.
+const GRAPH_DELAY = 2.5;
 
 // Capture-state — råa kanalmedel + timestamps (det som går till native). Inga DSP-buffrar.
 let raw = [], rawG = [], rawB = [], ts = [];
@@ -169,12 +172,14 @@ function tick() {
     if (ts.length > 60) { const l = ts.slice(-60); fps = 1e3 / ((l[l.length - 1] - l[0]) / (l.length - 1)); }
   }
 
-  // Live-graf (throttlad) — läser samma rå-buffrar, ändrar dem ej.
+  // Live-graf — jämn takt (~16fps) för mjuk rörelse. Börjar rita först GRAPH_DELAY s in i
+  // capturen så filter-edge-transienten (stora initiala peaken vid filtrets kallstart) hinner
+  // passera ut ur det visade fönstret innan grafen blir synlig.
   const nowMs = performance.now();
-  if (nowMs - lastGraph > 150) { lastGraph = nowMs; updateGraph(); }
+  if (raw.length > fps * GRAPH_DELAY && nowMs - lastGraph > 60) { lastGraph = nowMs; updateGraph(); }
 
   BIG.textContent = ok ? Math.floor(elapsed) + 's' : (rA < 5 ? '✗ ingen signal' : 'placera finger');
-  SUB.textContent = ok ? 'mäter — håll fingret stilla  (' + raw.length + ' sampel)' : 'lägg fingret över kameran';
+  SUB.textContent = ok ? 'mäter — håll fingret stilla' : 'lägg fingret över kameran';
   if (elapsed >= DUR) { finish(); return; }   // auto-stopp 60s (backup)
   requestAnimationFrame(tick);
 }
