@@ -1,21 +1,29 @@
 <!DOCTYPE html><html lang="sv"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>HRV capture-motor</title>
+<title>HRV mätning</title>
 <style>
-  html,body{background:#08090C;color:#00F082;font:15px/1.4 monospace;margin:0;padding:14px}
-  #big{font-size:30px;font-weight:bold}
+  html,body{background:#08090C;color:#EEF0F4;font:15px/1.4 system-ui,sans-serif;margin:0;padding:16px}
+  #big{font-size:30px;font-weight:bold;color:#00F082}
   #sub{font-size:13px;color:#8a8f98;margin-top:4px}
-  #log{font-size:11px;color:#5a6a5a;white-space:pre-wrap;margin-top:10px}
-  /* Redirect-robusthet: tappbar resultat-länk vid mätslut → färsk user-gesture så Chrome
-     dispatchar hrvresult:// pålitligt (auto-fyr utan gest är flaky efter 60s). */
-  #resultBtn{display:none;margin-top:22px;padding:20px 16px;background:#00F082;color:#08090C;
-    font-size:22px;font-weight:bold;text-align:center;text-decoration:none;border-radius:14px}
-  video{width:120px;height:90px;border:1px solid #222;margin-top:10px}
-  canvas{display:none}
+  #log{font-size:11px;color:#5a6a5a;white-space:pre-wrap;margin-top:8px}
+  /* Live-pulsvågform (filtrerad signal via inlinad Butterworth = lärobok). Lånat utseende
+     från webbappens drawWaveform — UTAN peak-markörer (peak-detektion = IP, körs native). */
+  #wave{display:block;width:100%;height:150px;margin-top:14px;background:#0D0F14;border-radius:14px}
+  #stopBtn{display:none;margin-top:14px;width:100%;padding:16px;background:#15171d;color:#ff6b6b;
+    border:1px solid #ff6b6b55;border-radius:14px;font-size:17px;font-weight:bold}
+  /* Redirect-robusthet: tappbar resultat-länk vid mätslut → färsk user-gesture. */
+  #resultBtn{display:none;margin-top:14px;padding:18px 16px;background:#00F082;color:#08090C;
+    font-size:21px;font-weight:bold;text-align:center;text-decoration:none;border-radius:14px}
+  /* Video körs (getUserMedia → capture) men VISAS EJ — 1px offscreen (ej display:none, som
+     kan stoppa frame-leverans i Chrome). Vågformen ger den visuella feedbacken istället. */
+  #V{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1}
+  canvas#C{display:none}
 </style></head>
 <body>
 <div id="big">startar…</div>
-<div id="sub">capture-motor — host äger torch</div>
+<div id="sub">lägg fingret över kameran</div>
+<canvas id="wave"></canvas>
+<button id="stopBtn">⏹ Stoppa mätning</button>
 <a id="resultBtn" href="#">Visa resultat →</a>
 <div id="log"></div>
 <video id="V" autoplay playsinline muted></video>
@@ -23,34 +31,108 @@
 
 <script>
 // ════════════════════════════════════════════════════════════════════════
-// HRV CAPTURE-MOTOR (capture-only, PRODUKTION) — IP-skyddad arkitektur.
+// HRV MÄT-MOTOR (capture-only, PRODUKTION) — IP-skyddad arkitektur.
 //
-// Denna sida kör BARA: getUserMedia + per-frame R/G/B-kanalmedel (central 24×16 ROI) +
-// gzip → hrvresult://raw. INGEN DSP, INGEN dsp.js-import, inga HRV-utdata. ALL signal-
-// behandling (detrend/Butterworth/peak-detektion/SQI/gate/RR/metriker = IP) körs NATIVE
-// i APK:n via RawPayloadCodec → SignalProcessor. "Webben = osynlig, IP-fattig capture-motor."
+// Sidan kör: getUserMedia + per-frame R/G/B-medel (central 24×16 ROI) + gzip → hrvresult://raw.
+// Live-vågformen filtreras med INLINAD Butterworth (bp2/bp4/af/ff1/ff/detrend = LÄROBOK,
+// bilinear-transform + zero-phase filtfilt + moving-average). Det är BARA för VISNING.
 //
-// Generisk W3C: getUserMedia + canvas-medel + CompressionStream — noll proprietär logik här.
-// (Dev/paritets-orakel med dsp.js + w*-fält bor i HRV-repots _twacap_raw.html, localhost.)
+// INGEN peak-detektion, INGEN SQI, INGEN HRV-compute här (= IP). ALL auktoritativ DSP körs
+// NATIVE i APK:n på den rå R/G/B-strömmen (RawPayloadCodec → SignalProcessor). Den rå
+// strömmen är single source of truth; vågformen påverkar EJ vad native får.
 //
-// TORCH: host-FG-service äger torch (setTorchMode Order 1, FÖRE getUserMedia). Sidan begär
-// ALDRIG torch själv (JS-torch kräver gest + funkar ej på S22+ Chrome). rMean = torch-proof.
+// TORCH: host-FG-service äger torch (setTorchMode Order 1). Sidan begär aldrig torch.
 // ════════════════════════════════════════════════════════════════════════
-const BIG = document.getElementById('big');
-const SUB = document.getElementById('sub');
-const LOG = document.getElementById('log');
-const V   = document.getElementById('V');
-const C   = document.getElementById('C');
-const cx  = C.getContext('2d', { willReadFrequently: true });
+const BIG  = document.getElementById('big');
+const SUB  = document.getElementById('sub');
+const LOG  = document.getElementById('log');
+const V    = document.getElementById('V');
+const C    = document.getElementById('C');
+const WAVE = document.getElementById('wave');
+const STOP = document.getElementById('stopBtn');
+const cx   = C.getContext('2d', { willReadFrequently: true });
 
-// SETTLE 3s (hoppa AE-warmup), DUR 60s. Host-FGS-fönstret är 65s → 60s lämnar marginal.
 const SETTLE = 3, DUR = 60;
 
-// Capture-state — BARA råa kanalmedel + timestamps. Inga DSP-buffrar.
+// Capture-state — råa kanalmedel + timestamps (det som går till native). Inga DSP-buffrar.
 let raw = [], rawG = [], rawB = [], ts = [];
-let fps = 30, t0 = 0, stm = null, wl = null, fired = false;
+let fps = 30, t0 = 0, stm = null, wl = null, fired = false, lastGraph = 0;
 
 function log(m) { LOG.textContent += m + '\n'; }
+
+// ── INLINAD LÄROBOKS-FILTER (Butterworth bandpass, zero-phase) — endast för live-graf ──
+// Bilinear-transform-design + filtfilt + moving-average-detrend. INGEN proprietär logik.
+function bp2(fs, fl, fh) {
+  const wL = 2 * Math.PI * fl / fs, wH = 2 * Math.PI * fh / fs;
+  const wLw = 2 * fs * Math.tan(wL / 2), wHw = 2 * fs * Math.tan(wH / 2);
+  const bw = wHw - wLw, w0 = Math.sqrt(wLw * wHw), Q = .7071;
+  const K = 2 * fs, K2 = K * K, w02 = w0 * w0, a0 = K2 + bw * K / Q + w02;
+  return { b: [bw * K / a0, 0, -bw * K / a0], a: [1, (2 * w02 - 2 * K2) / a0, (K2 - bw * K / Q + w02) / a0] };
+}
+function bp4(fs, fl, fh) { return [bp2(fs, fl, fh), bp2(fs, fl, fh)]; }
+function af(s, c) {
+  const o = new Float64Array(s.length); let z1 = 0, z2 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const x = s[i], y = c.b[0] * x + z1;
+    z1 = c.b[1] * x - c.a[1] * y + z2;
+    z2 = c.b[2] * x - c.a[2] * y;
+    o[i] = y;
+  }
+  return o;
+}
+function ff1(s, c) {
+  const p = Math.min(9, s.length - 1), pd = new Float64Array(s.length + 2 * p);
+  for (let i = 0; i < p; i++) { pd[i] = 2 * s[0] - s[p - i]; pd[s.length + p + i] = 2 * s[s.length - 1] - s[s.length - 2 - i]; }
+  for (let i = 0; i < s.length; i++) pd[p + i] = s[i];
+  const f = af(pd, c), r = new Float64Array(f.length);
+  for (let i = 0; i < f.length; i++) r[i] = f[f.length - 1 - i];
+  const b = af(r, c), o = new Float64Array(s.length);
+  for (let i = 0; i < s.length; i++) o[i] = b[b.length - 1 - p - i];
+  return o;
+}
+function ff(s, secs) { let o = s; for (const sec of secs) o = ff1(o, sec); return o; }
+function detrend(s, windowSec, fsv) {
+  const w = (Math.max(3, Math.round(windowSec * fsv)) | 1), half = (w - 1) / 2;
+  const out = new Float64Array(s.length);
+  for (let i = 0; i < s.length; i++) {
+    const left = Math.max(0, i - half), right = Math.min(s.length - 1, i + half);
+    let sum = 0; for (let j = left; j <= right; j++) sum += s[j];
+    out[i] = s[i] - sum / (right - left + 1);
+  }
+  return out;
+}
+
+// Rita rullande pulsvågform (lånat utseende från webbappens drawWaveform, UTAN peaks).
+function drawWave(filtered) {
+  const w = WAVE.clientWidth, h = WAVE.clientHeight, dp = devicePixelRatio || 1;
+  WAVE.width = w * dp; WAVE.height = h * dp;
+  const g2 = WAVE.getContext('2d'); g2.scale(dp, dp); g2.clearRect(0, 0, w, h);
+  g2.strokeStyle = '#00f0820a'; g2.lineWidth = .5;
+  for (let y = 0; y < h; y += 20) { g2.beginPath(); g2.moveTo(0, y); g2.lineTo(w, y); g2.stroke(); }
+  const vl = Math.min(filtered.length, Math.floor(w * 2));
+  if (vl < 2) return;
+  const vs = filtered.slice(-vl);
+  let am = 0; for (let i = 0; i < vs.length; i++) { const a = Math.abs(vs[i]); if (a > am) am = a; }
+  am = am || 1;
+  const tx = i => (i / (vl - 1)) * w, ty = v => h / 2 - (v / am) * (h * .4);
+  g2.beginPath(); for (let i = 0; i < vs.length; i++) i ? g2.lineTo(tx(i), ty(vs[i])) : g2.moveTo(tx(i), ty(vs[i]));
+  g2.lineTo(w, h); g2.lineTo(0, h); g2.closePath();
+  const grad = g2.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, '#00f08212'); grad.addColorStop(1, '#00f08200');
+  g2.fillStyle = grad; g2.fill();
+  g2.beginPath(); g2.strokeStyle = '#00f082'; g2.lineWidth = 1.8; g2.shadowColor = '#00f082'; g2.shadowBlur = 4;
+  for (let i = 0; i < vs.length; i++) i ? g2.lineTo(tx(i), ty(vs[i])) : g2.moveTo(tx(i), ty(vs[i]));
+  g2.stroke(); g2.shadowBlur = 0;
+}
+
+// Throttlad graf-uppdatering (~7fps). Filtrerar de senaste ~900 sampel — capture-loopen
+// (59fps) berörs EJ; rå R/G/B går oförändrat till native.
+function updateGraph() {
+  if (raw.length < fps * 2) return;
+  const N = Math.min(raw.length, 900), off = raw.length - N;
+  const combined = new Float64Array(N);
+  for (let i = 0; i < N; i++) combined[i] = raw[off + i] * 0.4 + rawG[off + i] * 0.6;
+  drawWave(ff(detrend(combined, 2, fps), bp4(fps, 0.5, 4)));
+}
 
 async function start() {
   try { wl = await navigator.wakeLock.request('screen'); } catch (_) {}
@@ -64,40 +146,40 @@ async function start() {
   }
   const tk = stm.getVideoTracks()[0], se = tk.getSettings();
   fps = se.frameRate || 30;
-  SUB.textContent = 'capturar ' + (se.width || '?') + 'x' + (se.height || '?') + '@' + Math.round(fps) + ' — host-torch';
+  SUB.textContent = 'mäter — håll fingret stilla';
   V.srcObject = stm; await V.play();
+  STOP.style.display = 'block';
   t0 = performance.now();
   requestAnimationFrame(tick);
 }
 
-// Per-frame: central 24×16 ROI → R/G/B-medel. INGEN DSP (det gör native på rå strömmen).
+// Per-frame: central 24×16 ROI → R/G/B-medel (UNCHANGED — exakt vad native får).
 function tick() {
   if (!stm) return;
   cx.drawImage(V, 0, 0, 32, 24);
-  const px = cx.getImageData(4, 4, 24, 16).data;       // central 24×16 (= app.js-ROI)
+  const px = cx.getImageData(4, 4, 24, 16).data;
   let rS = 0, gS = 0, bS = 0, n = 0;
   for (let i = 0; i < px.length; i += 4) { rS += px[i]; gS += px[i + 1]; bS += px[i + 2]; n++; }
   const rA = rS / n, gA = gS / n, bA = bS / n;
-  const ok = rA > 100 && rA > bA * 1.3 && rA > gA * 1.05;   // finger-OK-gate (= app.js)
+  const ok = rA > 100 && rA > bA * 1.3 && rA > gA * 1.05;
 
   const elapsed = (performance.now() - t0) / 1e3;
   if (ok && elapsed >= SETTLE) {
     raw.push(rA); rawG.push(gA); rawB.push(bA); ts.push(performance.now());
-    // glidande fps-uppskattning (samma som app.js) — bärs i payloaden, native använder den
-    if (ts.length > 60) {
-      const l = ts.slice(-60);
-      fps = 1e3 / ((l[l.length - 1] - l[0]) / (l.length - 1));
-    }
+    if (ts.length > 60) { const l = ts.slice(-60); fps = 1e3 / ((l[l.length - 1] - l[0]) / (l.length - 1)); }
   }
 
-  BIG.textContent = 'R=' + rA.toFixed(0) + (rA > 100 ? ' ✓' : rA < 5 ? ' ✗SVART' : '')
-    + '  ' + Math.floor(elapsed) + 's  (' + raw.length + 'f)';
-  if (elapsed >= DUR) { finish(); return; }
+  // Live-graf (throttlad) — läser samma rå-buffrar, ändrar dem ej.
+  const nowMs = performance.now();
+  if (nowMs - lastGraph > 150) { lastGraph = nowMs; updateGraph(); }
+
+  BIG.textContent = ok ? Math.floor(elapsed) + 's' : (rA < 5 ? '✗ ingen signal' : 'placera finger');
+  SUB.textContent = ok ? 'mäter — håll fingret stilla  (' + raw.length + ' sampel)' : 'lägg fingret över kameran';
+  if (elapsed >= DUR) { finish(); return; }   // auto-stopp 60s (backup)
   requestAnimationFrame(tick);
 }
 
-// gzip+base64url av rå capture-ström. CompressionStream = inbyggt i Chrome (ingen lib).
-// base64url = URL-säker, ingen padding (native java.util.Base64.getUrlDecoder).
+// gzip+base64url av rå capture-ström (UNCHANGED — native round-trip-kontrakt).
 async function gzipB64url(text) {
   const cs = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
   const ab = await new Response(cs).arrayBuffer();
@@ -108,14 +190,14 @@ async function gzipB64url(text) {
   return { b64: btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''), gz: bytes.length };
 }
 
-// Mätslut → gzippa rå R/G/B/T → hrvresult://raw. Ingen DSP, inga w*-fält (native räknar allt).
+// Mätslut (manuell stopp ELLER auto-stopp 60s) → stäng kamera/torch + deep-link med data
+// SÅ HÄR LÅNGT. Native (BridgeResultActivity) stoppar host-FGS → torch av promptt.
 async function finish() {
   if (fired) return; fired = true;
-  if (stm) { stm.getTracks().forEach(t => t.stop()); stm = null; }
+  STOP.style.display = 'none';
+  if (stm) { stm.getTracks().forEach(t => t.stop()); stm = null; }   // släpper kameran
   if (wl) { try { wl.release(); } catch (_) {} wl = null; }
 
-  // Rå capture-ström: 3-decimals kanalmedel + relativa timestamps (ms). Linje-format
-  // "R\nG\nB\nT" (ej JSON → native parsar utan org.json). checksum = round-trip-verifiering.
   const t0r = ts.length ? ts[0] : 0;
   const R = raw.map(x => Math.round(x * 1000) / 1000);
   const G = rawG.map(x => Math.round(x * 1000) / 1000);
@@ -126,18 +208,20 @@ async function finish() {
     R.reduce((a, b) => a + b, 0) + G.reduce((a, b) => a + b, 0) + B.reduce((a, b) => a + b, 0));
   const payload = R.join(',') + '\n' + G.join(',') + '\n' + B.join(',') + '\n' + T.join(',');
 
-  BIG.textContent = 'Komprimerar ' + n + ' frames…';
+  BIG.textContent = 'Komprimerar ' + n + ' sampel…';
+  SUB.textContent = '';
   const enc = await gzipB64url(payload);
   const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2);
 
   log('payload n=' + n + ' gz=' + enc.gz + 'B b64=' + enc.b64.length + 'B csum=' + csum);
-  BIG.textContent = 'Klar — ' + n + ' frames (' + (enc.b64.length / 1024 | 0) + ' KB)';
+  BIG.textContent = 'Klar — ' + n + ' sampel (' + (enc.b64.length / 1024 | 0) + ' KB)';
   SUB.textContent = 'Tryck för ditt resultat ↓';
   const btn = document.getElementById('resultBtn');
   btn.setAttribute('href', url);
   btn.style.display = 'block';
 }
 
+STOP.addEventListener('click', () => { finish(); });   // manuell stopp
 window.addEventListener('load', start);
 </script>
 </body></html>
