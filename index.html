@@ -66,7 +66,9 @@ const WAVE = document.getElementById('wave');
 const STOP = document.getElementById('stopBtn');
 const cx   = C.getContext('2d', { willReadFrequently: true });
 
-const SETTLE = 3, DUR = 60;
+const SETTLE = 3;
+// Mätlängd från host via URL (?dur=<sek>): 30 / 60 / 300. Default 60. Auto-stopp vid DUR.
+const DUR = parseInt(new URLSearchParams(location.search).get('dur'), 10) || 60;
 // Grafen börjar ritas först GRAPH_DELAY s efter capture-start (utöver SETTLE) så filter-
 // kallstarts-transienten (stora initiala peaken) hinner passera ut ur det visade fönstret.
 const GRAPH_DELAY = 2.5;
