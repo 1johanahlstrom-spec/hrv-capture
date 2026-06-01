@@ -328,18 +328,18 @@ async function finish(manual) {
 
 STOP.addEventListener('click', () => { finish(true); });   // manuell stopp (färsk gesture)
 
-// AVBROTT-skydd (torch-svans): om sidan blir DOLD (hemsvep, app-byte, bakåt-som-navigerar-bort
-// i Chrome) INNAN mätslut → signalera native att släcka host-torch via hrvresult://cancel.
-// Host-appen är bakgrundad HELA mätningen → detta är ENDA kroken som fångar de vägarna
-// (MainActivity.onResume + FGS.onTaskRemoved fångar bara bakåt-till-startskärm resp. svep-bort-
-// task). `fired` = mätningen redan klar (vi navigerar till resultatet) → hoppa över (annars dubbel-
-// signal). `torchCancelled` = skicka bara en gång. Custom-scheme-nav unloadar ej sidan, så en ev.
-// återkomst kan fortf. stoppa/auto-stoppa — men torch är då släckt: avbrott = avbrott.
-let torchCancelled = false;
+// AVBROTT-skydd (torch-svans): om sidan blir DOLD (hemsvep, app-byte) INNAN mätslut → SLÄPP
+// kameran (track.stop). Host-FGS:ens AvailabilityCallback ser kameran frigöras → släcker host-
+// torch (~1s). Host-appen är bakgrundad HELA mätningen, så detta är kroken som fångar hemsvep/
+// app-byte. Vi navigerar INTE till en custom-scheme — Android BAL blockerar Activity-launch från
+// bakgrundande Chrome (device-bevisat: lampan slocknade först på 65s-fönstret). Kamera-frigörning
+// funkar utan foreground. `fired` = mätningen redan klar (finish() stoppar redan tracket) → hoppa
+// över. `leftOnce` = en gång. Återkomst: capturen är död (torch släckt) → avbrott = avbrott.
+let leftOnce = false;
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && !fired && !torchCancelled) {
-    torchCancelled = true;
-    location.href = 'hrvresult://cancel';
+  if (document.visibilityState === 'hidden' && !fired && !leftOnce) {
+    leftOnce = true;
+    if (stm) { stm.getTracks().forEach(t => t.stop()); stm = null; }
   }
 });
 
