@@ -9,6 +9,14 @@
   /* Live-pulsvågform (filtrerad signal via inlinad Butterworth = lärobok). Lånat utseende
      från webbappens drawWaveform — UTAN peak-markörer (peak-detektion = IP, körs native). */
   #wave{display:block;width:100%;height:150px;margin-top:14px;background:#0D0F14;border-radius:14px}
+  /* Andningsguide (overlay UNDER mätning). REN DOM-animation lånad från webbappens
+     breathing.js animateBreathCircle — NOLL IP (sätter bara cirkel-storlek/färg/text per
+     fas, ingen DSP). Påverkar EJ rå R/G/B → native. Drivs av graf-timern (elapsed). */
+  #breath{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:210px;margin-top:16px}
+  #bCirc{width:60px;height:60px;border-radius:50%;background:rgba(0,190,216,0.2);border:2px solid rgba(0,190,216,0.5)}
+  #bLab{margin-top:16px;font-size:16px;font-weight:bold;color:#cfd3da}
+  #bSub{font-size:13px;color:#8a8f98;margin-top:2px}
+  #bPat{font-size:11px;color:#5a6a7a;margin-top:10px}
   #stopBtn{display:none;margin-top:14px;width:100%;padding:16px;background:#15171d;color:#ff6b6b;
     border:1px solid #ff6b6b55;border-radius:14px;font-size:17px;font-weight:bold}
   /* Redirect-robusthet: tappbar resultat-länk vid mätslut → färsk user-gesture. */
@@ -23,6 +31,12 @@
 <div id="big">startar…</div>
 <div id="sub">lägg fingret över kameran</div>
 <canvas id="wave"></canvas>
+<div id="breath">
+  <div id="bCirc"></div>
+  <div id="bLab">Andas in</div>
+  <div id="bSub">5s</div>
+  <div id="bPat">Andning: Resonans · tryck för att byta</div>
+</div>
 <button id="stopBtn">⏹ Stoppa mätning</button>
 <a id="resultBtn" href="#">Visa resultat →</a>
 <div id="log"></div>
@@ -152,6 +166,57 @@ function updateGraph() {
   drawWave(ff(detrend(combined, 2, fps), bp4(fps, 0.5, 4)));
 }
 
+// ── ANDNINGSGUIDE (verbatim-port av webbappens breathing.js animateBreathCircle) ──
+// REN DOM: räknar fas ur elapsed, sätter cirkel-storlek/färg + label + nedräkning. INGEN
+// DSP, rör EJ raw/rawG/ts → native opåverkat. Drivs av graf-timern (egen elapsed).
+const BREATH_PATTERNS = [
+  { name: 'Resonans', phases: [{ t: 5.45, l: 'Andas in', act: 'in' }, { t: 5.45, l: 'Andas ut', act: 'out' }] },
+  { name: '4-7-8',    phases: [{ t: 4, l: 'Andas in', act: 'in' }, { t: 7, l: 'Håll', act: 'hold' }, { t: 8, l: 'Andas ut', act: 'out' }] },
+  { name: 'Box',      phases: [{ t: 4, l: 'Andas in', act: 'in' }, { t: 4, l: 'Håll', act: 'hold' }, { t: 4, l: 'Andas ut', act: 'out' }, { t: 4, l: 'Håll', act: 'hold' }] },
+];
+let breathIdx = 0;
+function animateBreathCircle(elapsed, patIdx, circId, labId, subId) {
+  const pat = BREATH_PATTERNS[patIdx];
+  const cycleLen = pat.phases.reduce((a, p) => a + p.t, 0);
+  const inCycle = elapsed % cycleLen;
+  let phaseTime = 0, curPhase = pat.phases[0];
+  for (const p of pat.phases) {
+    if (inCycle >= phaseTime && inCycle < phaseTime + p.t) { curPhase = p; break; }
+    phaseTime += p.t;
+  }
+  const phaseProgress = (inCycle - phaseTime) / curPhase.t;
+  const remaining = Math.ceil(curPhase.t - (inCycle - phaseTime));
+  let size;
+  if (curPhase.act === 'in') size = 60 + 110 * phaseProgress;
+  else if (curPhase.act === 'out') size = 170 - 110 * phaseProgress;
+  else {
+    const phIdx = pat.phases.indexOf(curPhase);
+    const prevAct = phIdx > 0 ? pat.phases[phIdx - 1].act : pat.phases[pat.phases.length - 1].act;
+    size = prevAct === 'in' ? 170 : 60;
+  }
+  const circ = document.getElementById(circId);
+  if (!circ) return;
+  const hue = curPhase.act === 'in' ? 190 : curPhase.act === 'out' ? 170 : 210;
+  const intensity = curPhase.act === 'hold' ? 0.1 : 0.2;
+  circ.style.width = size + 'px'; circ.style.height = size + 'px';
+  circ.style.background = `rgba(0,${hue},216,${intensity})`;
+  circ.style.border = `2px solid rgba(0,${hue},216,0.5)`;
+  circ.style.transition = 'width 0.15s ease, height 0.15s ease';
+  document.getElementById(labId).textContent = curPhase.l;
+  document.getElementById(subId).textContent = remaining + 's';
+  return cycleLen;
+}
+function updateBreath() {
+  if (!t0) return;
+  const elapsed = (performance.now() - t0) / 1e3;
+  if (elapsed < SETTLE) return;        // animera först när mätningen är aktiv
+  animateBreathCircle(elapsed - SETTLE, breathIdx, 'bCirc', 'bLab', 'bSub');
+}
+document.getElementById('breath').addEventListener('click', () => {
+  breathIdx = (breathIdx + 1) % BREATH_PATTERNS.length;
+  document.getElementById('bPat').textContent = 'Andning: ' + BREATH_PATTERNS[breathIdx].name + ' · tryck för att byta';
+});
+
 async function start() {
   try { wl = await navigator.wakeLock.request('screen'); } catch (_) {}
   const cfgs = [
@@ -167,6 +232,7 @@ async function start() {
   SUB.textContent = 'mäter — håll fingret stilla';
   V.srcObject = stm; await V.play();
   STOP.style.display = 'block';
+  document.getElementById('breath').style.display = 'flex';   // visa andningsguide
   t0 = performance.now();
   startGraphLoop();
   requestAnimationFrame(tick);
@@ -179,6 +245,7 @@ function startGraphLoop() {
   graphTimer = setInterval(() => {
     if (fired) { clearInterval(graphTimer); graphTimer = null; return; }
     updateGraph();
+    updateBreath();
   }, 66);
 }
 
@@ -222,6 +289,7 @@ async function gzipB64url(text) {
 async function finish() {
   if (fired) return; fired = true;
   STOP.style.display = 'none';
+  document.getElementById('breath').style.display = 'none';   // dölj andningsguide
   if (stm) { stm.getTracks().forEach(t => t.stop()); stm = null; }   // släpper kameran
   if (wl) { try { wl.release(); } catch (_) {} wl = null; }
 
