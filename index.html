@@ -317,7 +317,7 @@ async function finish(manual) {
   BIG.textContent = 'Komprimerar ' + n + ' sampel…';
   SUB.textContent = '';
   const enc = await gzipB64url(payload);
-  const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2);
+  const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2) + '&dur=' + DUR;
 
   log('payload n=' + n + ' gz=' + enc.gz + 'B b64=' + enc.b64.length + 'B csum=' + csum);
   BIG.textContent = 'Klar — ' + n + ' sampel (' + (enc.b64.length / 1024 | 0) + ' KB)';
