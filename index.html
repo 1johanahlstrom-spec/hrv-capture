@@ -236,7 +236,11 @@ async function start() {
   SUB.textContent = 'mäter — håll fingret stilla';
   V.srcObject = stm; await V.play();
   STOP.style.display = 'block';
-  if (SHOW_BREATH) document.getElementById('breath').style.display = 'flex';   // visa andningsguide (om vald)
+  if (SHOW_BREATH) {
+    document.getElementById('breath').style.display = 'flex';   // visa andningsguide (om vald)
+    // Sätt etiketten till det VALDA mönstret (annars stod hårdkodad "Resonans" tills man tappade).
+    document.getElementById('bPat').textContent = 'Andning: ' + BREATH_PATTERNS[breathIdx].name + ' · tryck för att byta';
+  }
   t0 = performance.now();
   startGraphLoop();
   requestAnimationFrame(tick);
