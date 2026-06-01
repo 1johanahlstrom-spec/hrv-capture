@@ -286,7 +286,10 @@ async function gzipB64url(text) {
 
 // Mätslut (manuell stopp ELLER auto-stopp 60s) → stäng kamera/torch + deep-link med data
 // SÅ HÄR LÅNGT. Native (BridgeResultActivity) stoppar host-FGS → torch av promptt.
-async function finish() {
+// `manual`=true (stopp-knappen) → färsk user-gesture finns → vi navigerar direkt till
+// resultatet (se nedan) så host-torch släcks PROMPT. Auto-stopp (60s, ingen färsk beröring →
+// user-activation utgången) förlitar sig på den tappbara knappen (redirect-robusthet, #1-fix).
+async function finish(manual) {
   if (fired) return; fired = true;
   STOP.style.display = 'none';
   document.getElementById('breath').style.display = 'none';   // dölj andningsguide
@@ -314,9 +317,16 @@ async function finish() {
   const btn = document.getElementById('resultBtn');
   btn.setAttribute('href', url);
   btn.style.display = 'block';
+
+  // Manuell stopp: stopp-knappens klick är en färsk user-gesture → navigera direkt till
+  // resultatet. Det når BridgeResultActivity → host-FGS stoppas → TORCH SLÄCKS PROMPT
+  // (annars lyser den tills FGS:ens 65s-fönster löper ut — det var buggen). Knappen ovan
+  // står kvar som fallback om navigeringen skulle blockeras. (Auto-stopp navigerar EJ —
+  // user-activation är då utgången; knappen är dess pålitliga väg.)
+  if (manual) location.href = url;
 }
 
-STOP.addEventListener('click', () => { finish(); });   // manuell stopp
+STOP.addEventListener('click', () => { finish(true); });   // manuell stopp (färsk gesture)
 window.addEventListener('load', start);
 </script>
 </body></html>
