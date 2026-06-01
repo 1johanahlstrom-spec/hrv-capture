@@ -327,6 +327,22 @@ async function finish(manual) {
 }
 
 STOP.addEventListener('click', () => { finish(true); });   // manuell stopp (färsk gesture)
+
+// AVBROTT-skydd (torch-svans): om sidan blir DOLD (hemsvep, app-byte, bakåt-som-navigerar-bort
+// i Chrome) INNAN mätslut → signalera native att släcka host-torch via hrvresult://cancel.
+// Host-appen är bakgrundad HELA mätningen → detta är ENDA kroken som fångar de vägarna
+// (MainActivity.onResume + FGS.onTaskRemoved fångar bara bakåt-till-startskärm resp. svep-bort-
+// task). `fired` = mätningen redan klar (vi navigerar till resultatet) → hoppa över (annars dubbel-
+// signal). `torchCancelled` = skicka bara en gång. Custom-scheme-nav unloadar ej sidan, så en ev.
+// återkomst kan fortf. stoppa/auto-stoppa — men torch är då släckt: avbrott = avbrott.
+let torchCancelled = false;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && !fired && !torchCancelled) {
+    torchCancelled = true;
+    location.href = 'hrvresult://cancel';
+  }
+});
+
 window.addEventListener('load', start);
 </script>
 </body></html>
