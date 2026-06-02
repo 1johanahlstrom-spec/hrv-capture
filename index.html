@@ -3,8 +3,18 @@
 <title>HRV mätning</title>
 <style>
   html,body{background:#08090C;color:#EEF0F4;font:15px/1.4 system-ui,sans-serif;margin:0;padding:16px}
-  #big{font-size:30px;font-weight:bold;color:#00F082}
-  #sub{font-size:13px;color:#8a8f98;margin-top:4px}
+  /* Mät-mätare: ring (mät-tid, sluts vid klar) + live-BPM i mitten. ⚠️ Live-BPM = lättvikts-
+     peak-räkning i JS (display-only, Johans val) — den AUKTORITATIVA BPM:en räknas NATIVE.
+     Detta lägger medvetet en enkel peak-räknare på publika sidan (bryter "noll-DSP/IP-grep"). */
+  #meter{position:relative;width:172px;height:172px;margin:8px auto 0}
+  #ring{width:100%;height:100%;transform:rotate(-90deg)}
+  #ringTrack{fill:none;stroke:#15171d;stroke-width:8}
+  #ringProg{fill:none;stroke:#00F082;stroke-width:8;stroke-linecap:round;
+    stroke-dasharray:339.292;stroke-dashoffset:339.292;transition:stroke-dashoffset .12s linear}
+  #meterCenter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  #bpmNum{font-size:54px;font-weight:bold;color:#EEF0F4;line-height:1}
+  #bpmUnit{font-size:13px;color:#8a8f98;letter-spacing:2px;margin-top:3px}
+  #sub{font-size:13px;color:#8a8f98;margin-top:10px;text-align:center}
   #log{font-size:11px;color:#5a6a5a;white-space:pre-wrap;margin-top:8px}
   /* Live-pulsvågform (filtrerad signal via inlinad Butterworth = lärobok). Lånat utseende
      från webbappens drawWaveform — UTAN peak-markörer (peak-detektion = IP, körs native). */
@@ -28,8 +38,14 @@
   canvas#C{display:none}
 </style></head>
 <body>
-<div id="big">startar…</div>
-<div id="sub">lägg fingret över kameran</div>
+<div id="meter">
+  <svg id="ring" viewBox="0 0 120 120">
+    <circle id="ringTrack" cx="60" cy="60" r="54"/>
+    <circle id="ringProg" cx="60" cy="60" r="54"/>
+  </svg>
+  <div id="meterCenter"><div id="bpmNum">--</div><div id="bpmUnit">BPM</div></div>
+</div>
+<div id="sub">startar…</div>
 <canvas id="wave"></canvas>
 <div id="breath">
   <div id="bCirc"></div>
@@ -57,8 +73,9 @@
 //
 // TORCH: host-FG-service äger torch (setTorchMode Order 1). Sidan begär aldrig torch.
 // ════════════════════════════════════════════════════════════════════════
-const BIG  = document.getElementById('big');
 const SUB  = document.getElementById('sub');
+const RINGP = document.getElementById('ringProg');
+const BPMN  = document.getElementById('bpmNum');
 const LOG  = document.getElementById('log');
 const V    = document.getElementById('V');
 const C    = document.getElementById('C');
@@ -83,6 +100,9 @@ const GRAPH_DELAY = 2.5;
 // Capture-state — råa kanalmedel + timestamps (det som går till native). Inga DSP-buffrar.
 let raw = [], rawG = [], rawB = [], ts = [];
 let fps = 30, t0 = 0, stm = null, wl = null, fired = false;
+// Mät-mätare-state: finger-status (clearar BPM när fingret lyfts), EMA-utjämnad BPM, ringomkrets.
+let fingerOk = false, bpmEma = null;
+const RING_C = 2 * Math.PI * 54;
 
 function log(m) { LOG.textContent += m + '\n'; }
 
@@ -167,12 +187,51 @@ function drawWave(filtered) {
 
 // Graf-uppdatering på EGEN jämn timer (se startGraphLoop) — frikopplad från capture-loopens
 // jitter. Filtrerar de senaste ~900 sampel; capture-loopen (59fps) + rå R/G/B → native orörda.
+// ── MÄT-RING (mät-tid) + LIVE-BPM-PREVIEW ────────────────────────────────────────────────
+// Ringen sluts ∝ förfluten tid / DUR. Live-BPM = ENKEL peak-räkning på den redan filtrerade
+// display-signalen (samma som vågformen) → median-intervall → BPM, EMA-utjämnad. ⚠️ RÅ live-
+// förhandsvisning (Johans val): den AUKTORITATIVA BPM:en + ALL gating/SQI räknas NATIVE på rå
+// R/G/B (oförändrat). Läser bara display-signalen → raw/rawG/ts orörda → native-kontrakt byte-likt.
+function updateRing() {
+  if (!t0) return;
+  const p = Math.min(((performance.now() - t0) / 1e3) / DUR, 1);
+  RINGP.style.strokeDashoffset = RING_C * (1 - p);
+}
+// Lättvikts-peak-räknare (lärobok: lokala max > 40% av fönster-max, refraktär ≥0.33s) → median-RR.
+function liveBpm(sig, fsv) {
+  const n = sig.length;
+  if (n < fsv * 4) return null;
+  let mx = 0; for (let i = 0; i < n; i++) { const a = Math.abs(sig[i]); if (a > mx) mx = a; }
+  if (mx < 1e-6) return null;
+  const thr = mx * 0.4, refr = Math.round(fsv * 0.33), pk = [];
+  for (let i = 1; i < n - 1; i++) {
+    if (sig[i] > thr && sig[i] >= sig[i - 1] && sig[i] > sig[i + 1]) {
+      if (pk.length && i - pk[pk.length - 1] < refr) { if (sig[i] > sig[pk[pk.length - 1]]) pk[pk.length - 1] = i; }
+      else pk.push(i);
+    }
+  }
+  if (pk.length < 4) return null;
+  const iv = []; for (let i = 1; i < pk.length; i++) iv.push((pk[i] - pk[i - 1]) / fsv);
+  iv.sort((a, b) => a - b);
+  const bpm = 60 / iv[iv.length >> 1];
+  return (bpm >= 35 && bpm <= 200) ? bpm : null;
+}
+function updateBpm(filt) {
+  if (!fingerOk) { bpmEma = null; BPMN.textContent = '--'; return; }
+  const b = liveBpm(filt, fps);
+  if (b == null) return;                          // behåll senaste visade tills nästa giltiga
+  bpmEma = bpmEma == null ? b : bpmEma * 0.7 + b * 0.3;
+  BPMN.textContent = Math.round(bpmEma);
+}
+
 function updateGraph() {
   if (raw.length < fps * GRAPH_DELAY) return;
   const N = Math.min(raw.length, 900), off = raw.length - N;
   const combined = new Float64Array(N);
   for (let i = 0; i < N; i++) combined[i] = raw[off + i] * 0.4 + rawG[off + i] * 0.6;
-  drawWave(ff(detrend(combined, 2, fps), bp4(fps, 0.5, 4)));
+  const filt = ff(detrend(combined, 2, fps), bp4(fps, 0.5, 4));
+  if (WAVE.style.display !== 'none') drawWave(filt);   // vågform döljs när andningsguiden är på
+  updateBpm(filt);                                     // live-BPM ur samma filtrerade signal
 }
 
 // ── ANDNINGSGUIDE (verbatim-port av webbappens breathing.js animateBreathCircle) ──
@@ -234,7 +293,7 @@ async function start() {
   ];
   for (let i = 0; i < cfgs.length; i++) {
     try { stm = await navigator.mediaDevices.getUserMedia({ video: cfgs[i] }); break; }
-    catch (e) { if (i === cfgs.length - 1) { BIG.textContent = 'getUserMedia FAIL ' + e.name; return; } }
+    catch (e) { if (i === cfgs.length - 1) { SUB.textContent = 'getUserMedia FAIL ' + e.name; return; } }
   }
   const tk = stm.getVideoTracks()[0], se = tk.getSettings();
   fps = se.frameRate || 30;
@@ -243,6 +302,7 @@ async function start() {
   STOP.style.display = 'block';
   if (SHOW_BREATH) {
     document.getElementById('breath').style.display = 'flex';   // visa andningsguide (om vald)
+    WAVE.style.display = 'none';   // andningscirkeln är fokus → dölj vågformen (ring+BPM ger signal-feedback)
     // Sätt etiketten till det VALDA mönstret (annars stod hårdkodad "Resonans" tills man tappade).
     document.getElementById('bPat').textContent = 'Andning: ' + BREATH_PATTERNS[breathIdx].name + ' · tryck för att byta';
   }
@@ -257,6 +317,7 @@ let graphTimer = null;
 function startGraphLoop() {
   graphTimer = setInterval(() => {
     if (fired) { clearInterval(graphTimer); graphTimer = null; return; }
+    updateRing();
     updateGraph();
     updateBreath();
   }, 66);
@@ -280,8 +341,8 @@ function tick() {
 
   // (Live-grafen ritas EJ här — den körs på en egen jämn timer, startGraphLoop, frikopplad
   // från capture-loopens timing-jitter för mjuk rörelse.)
-  BIG.textContent = ok ? Math.floor(elapsed) + 's' : (rA < 5 ? '✗ ingen signal' : 'placera finger');
-  SUB.textContent = ok ? 'mäter — håll fingret stilla' : 'lägg fingret över kameran';
+  fingerOk = ok;   // updateBpm clearar BPM-siffran till "--" när fingret är borta; ringen = mät-tid
+  SUB.textContent = ok ? 'mäter — håll fingret stilla' : (rA < 5 ? '✗ ingen signal' : 'lägg fingret över kameran');
   if (elapsed >= DUR) { finish(); return; }   // auto-stopp 60s (backup)
   requestAnimationFrame(tick);
 }
@@ -319,15 +380,14 @@ async function finish(manual) {
     R.reduce((a, b) => a + b, 0) + G.reduce((a, b) => a + b, 0) + B.reduce((a, b) => a + b, 0));
   const payload = R.join(',') + '\n' + G.join(',') + '\n' + B.join(',') + '\n' + T.join(',');
 
-  BIG.textContent = 'Komprimerar ' + n + ' sampel…';
-  SUB.textContent = '';
+  RINGP.style.strokeDashoffset = 0;   // ringen full = mätningen klar
+  SUB.textContent = 'Komprimerar ' + n + ' sampel…';
   const enc = await gzipB64url(payload);
   const effectQ = EFFECT ? ('&effect=' + EFFECT + '&estep=' + ESTEP) : '';
   const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2) + '&dur=' + DUR + effectQ;
 
   log('payload n=' + n + ' gz=' + enc.gz + 'B b64=' + enc.b64.length + 'B csum=' + csum);
-  BIG.textContent = 'Klar — ' + n + ' sampel (' + (enc.b64.length / 1024 | 0) + ' KB)';
-  SUB.textContent = 'Tryck för ditt resultat ↓';
+  SUB.textContent = 'Klar — ' + n + ' sampel (' + (enc.b64.length / 1024 | 0) + ' KB) · tryck nedan ↓';
   const btn = document.getElementById('resultBtn');
   btn.setAttribute('href', url);
   btn.style.display = 'block';
