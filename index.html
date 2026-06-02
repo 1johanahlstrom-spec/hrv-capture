@@ -247,10 +247,14 @@ let breathIdx = Math.min(2, Math.max(0, parseInt(_params.get('bpat'), 10) || 0))
 // puls (tiotals ms); kan ge en liten rörelse-artefakt i PPG-signalen → hålls lätt.
 let lastBreathAct = null;
 function breathHaptic(act) {
-  if (!navigator.vibrate) return;
-  if (act === 'in')       navigator.vibrate([20, 40, 20]);   // di-dit = andas IN
-  else if (act === 'out') navigator.vibrate(40);             // en puls = andas UT
-  else                    navigator.vibrate(15);             // kort = håll
+  // TEMP-DIAGNOS: visa varför haptiken ev. uteblir, live under cirkeln.
+  // API=false → Vibration API saknas. API=true & →false → blockerad (user-activation saknas i TWA).
+  // API=true & →true men ingen vibration → telefon-inställning (silent/DND/touch-vibration av).
+  const has = (typeof navigator.vibrate === 'function');
+  const pat = act === 'in' ? [20, 40, 20] : act === 'out' ? 40 : 15;
+  const ok  = has ? navigator.vibrate(pat) : false;
+  const bp  = document.getElementById('bPat');
+  if (bp) bp.textContent = 'haptik · API=' + has + ' · ' + act + '→' + ok;
 }
 function animateBreathCircle(elapsed, patIdx, circId, labId, subId) {
   const pat = BREATH_PATTERNS[patIdx];
