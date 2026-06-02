@@ -15,9 +15,12 @@
   #bpmNum{font-size:54px;font-weight:bold;color:#00F082;line-height:1}
   #bpmUnit{font-size:13px;color:#8a8f98;letter-spacing:2px;margin-top:3px}
   #sub{font-size:13px;color:#8a8f98;margin-top:10px;text-align:center}
-  /* Instruktion på tapp-skärmen (flyttad från native start-kortet) — döljs när mätningen kör. */
-  #intro{font-size:15px;color:#cfd3da;text-align:center;margin-top:16px;line-height:1.55}
-  #intro b{color:#EEF0F4}
+  /* Instruktion på tapp-skärmen (flyttad från native start-kortet) — döljs när mätningen kör.
+     Två punkter, större text (17px) med hängande indrag (Johans önskemål). */
+  #intro{margin:18px auto 0;max-width:320px;text-align:left}
+  #intro .iLine{font-size:17px;color:#dfe2e8;line-height:1.45;padding-left:18px;text-indent:-18px}
+  #intro .iLine + .iLine{margin-top:12px}
+  #intro b{color:#EEF0F4;font-weight:600}
   #log{font-size:11px;color:#5a6a5a;white-space:pre-wrap;margin-top:8px}
   /* Live-pulsvågform (filtrerad signal via inlinad Butterworth = lärobok). Lånat utseende
      från webbappens drawWaveform — UTAN peak-markörer (peak-detektion = IP, körs native). */
@@ -52,7 +55,10 @@
   <div id="meterCenter"><div id="bpmNum">--</div><div id="bpmUnit">BPM</div></div>
 </div>
 <div id="sub"></div>
-<div id="intro">Täck <b>kamera + lampa</b> helt med fingret och håll stilla tills mätningen är klar.</div>
+<div id="intro">
+  <div class="iLine">• Lägg pekfingret lätt över <b>kamera och lampa</b></div>
+  <div class="iLine">• Håll fingret <b>stilla</b> under mätning. Vila gärna handen på ett bord.</div>
+</div>
 <button id="startBtn">▶ Tryck för att börja</button>
 <canvas id="wave"></canvas>
 <div id="breath">
