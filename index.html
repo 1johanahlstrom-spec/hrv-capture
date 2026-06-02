@@ -230,8 +230,8 @@ function updateGraph() {
   const combined = new Float64Array(N);
   for (let i = 0; i < N; i++) combined[i] = raw[off + i] * 0.4 + rawG[off + i] * 0.6;
   const filt = ff(detrend(combined, 2, fps), bp4(fps, 0.5, 4));
-  if (WAVE.style.display !== 'none') drawWave(filt);   // vågform döljs när andningsguiden är på
-  updateBpm(filt);                                     // live-BPM ur samma filtrerade signal
+  drawWave(filt);                  // pulsvågform — visas ALLTID (även med andningsguiden på)
+  updateBpm(filt);                 // live-BPM ur samma filtrerade signal
 }
 
 // ── ANDNINGSGUIDE (verbatim-port av webbappens breathing.js animateBreathCircle) ──
@@ -302,7 +302,6 @@ async function start() {
   STOP.style.display = 'block';
   if (SHOW_BREATH) {
     document.getElementById('breath').style.display = 'flex';   // visa andningsguide (om vald)
-    WAVE.style.display = 'none';   // andningscirkeln är fokus → dölj vågformen (ring+BPM ger signal-feedback)
     // Sätt etiketten till det VALDA mönstret (annars stod hårdkodad "Resonans" tills man tappade).
     document.getElementById('bPat').textContent = 'Andning: ' + BREATH_PATTERNS[breathIdx].name + ' · tryck för att byta';
   }
