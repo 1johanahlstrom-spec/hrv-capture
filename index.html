@@ -71,6 +71,11 @@ const SETTLE = 3;
 const _params = new URLSearchParams(location.search);
 const DUR = parseInt(_params.get('dur'), 10) || 60;
 const SHOW_BREATH = (_params.get('breath') ?? '1') !== '0';   // default på (bakåtkompat)
+// EFFEKT-flöde (Mät effekt av guiden): host skickar effect=1 + estep (1/2/3). Vi EKAR dem bara
+// vidare in i deep-linken nedan — inget DSP, ingen breath-logik rörd — så native (BridgeResult-
+// Activity) vet vilket av de tre stegen som just avslutades. Saknas = vanlig mätning.
+const EFFECT = _params.get('effect');
+const ESTEP  = _params.get('estep');
 // Grafen börjar ritas först GRAPH_DELAY s efter capture-start (utöver SETTLE) så filter-
 // kallstarts-transienten (stora initiala peaken) hinner passera ut ur det visade fönstret.
 const GRAPH_DELAY = 2.5;
@@ -317,7 +322,8 @@ async function finish(manual) {
   BIG.textContent = 'Komprimerar ' + n + ' sampel…';
   SUB.textContent = '';
   const enc = await gzipB64url(payload);
-  const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2) + '&dur=' + DUR;
+  const effectQ = EFFECT ? ('&effect=' + EFFECT + '&estep=' + ESTEP) : '';
+  const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2) + '&dur=' + DUR + effectQ;
 
   log('payload n=' + n + ' gz=' + enc.gz + 'B b64=' + enc.b64.length + 'B csum=' + csum);
   BIG.textContent = 'Klar — ' + n + ' sampel (' + (enc.b64.length / 1024 | 0) + ' KB)';
