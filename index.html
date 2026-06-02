@@ -15,6 +15,9 @@
   #bpmNum{font-size:54px;font-weight:bold;color:#00F082;line-height:1}
   #bpmUnit{font-size:13px;color:#8a8f98;letter-spacing:2px;margin-top:3px}
   #sub{font-size:13px;color:#8a8f98;margin-top:10px;text-align:center}
+  /* Instruktion på tapp-skärmen (flyttad från native start-kortet) — döljs när mätningen kör. */
+  #intro{font-size:15px;color:#cfd3da;text-align:center;margin-top:16px;line-height:1.55}
+  #intro b{color:#EEF0F4}
   #log{font-size:11px;color:#5a6a5a;white-space:pre-wrap;margin-top:8px}
   /* Live-pulsvågform (filtrerad signal via inlinad Butterworth = lärobok). Lånat utseende
      från webbappens drawWaveform — UTAN peak-markörer (peak-detektion = IP, körs native). */
@@ -48,7 +51,8 @@
   </svg>
   <div id="meterCenter"><div id="bpmNum">--</div><div id="bpmUnit">BPM</div></div>
 </div>
-<div id="sub">lägg fingret över kameran</div>
+<div id="sub"></div>
+<div id="intro">Täck <b>kamera + lampa</b> helt med fingret och håll stilla tills mätningen är klar.</div>
 <button id="startBtn">▶ Tryck för att börja</button>
 <canvas id="wave"></canvas>
 <div id="breath">
@@ -436,6 +440,10 @@ document.addEventListener('visibilitychange', () => {
 // Tap-to-start: mätningen börjar på en tap PÅ SIDAN (ej auto) → ger user-activation så Chrome
 // tillåter navigator.vibrate (andnings-haptiken). Tappen = "placera finger + börja".
 const START = document.getElementById('startBtn');
-START.addEventListener('click', () => { START.style.display = 'none'; start(); });
+START.addEventListener('click', () => {
+  START.style.display = 'none';
+  document.getElementById('intro').style.display = 'none';   // dölj instruktionen när mätningen kör
+  start();
+});
 </script>
 </body></html>
