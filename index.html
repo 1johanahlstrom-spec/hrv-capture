@@ -452,4 +452,21 @@ START.addEventListener('click', () => {
   start();
 });
 </script>
+<script>
+// ── SERVICE WORKER (offline-cachning av capture-sidan) ──────────────────────
+// ROBUSTHET, ej DSP: cachar denna self-contained HTML (allt inline) så en mätning
+// fungerar offline / när GitHub Pages är nere. Rör EJ rå R/G/B → native — deep-
+// linken hrvresult:// är ett custom-scheme som INTE går genom service-workern, och
+// all DSP körs native. SW:n ser bara HTML-laddningen. Detaljer + cache-buster-
+// samspel (?t) + uppdaterings-disciplin: se sw.js.
+//
+// ⚠️ FÖR ATT PUSHA EN UPPDATERING AV DENNA SIDA: ändra index.html + BUMPA
+//    CACHE_VERSION i sw.js (vN → vN+1). Annars serverar SW:n gammal cachad sida.
+if ('serviceWorker' in navigator) {
+  // updateViaCache:'none' → Chrome hämtar sw.js förbi HTTP-cachen vid varje
+  // uppdaterings-koll → en bumpad CACHE_VERSION upptäcks direkt (ej fördröjt).
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+    .catch(function () { /* tyst: sidan fungerar online även utan SW */ });
+}
+</script>
 </body></html>
