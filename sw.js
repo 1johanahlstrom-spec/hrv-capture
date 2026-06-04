@@ -35,7 +35,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 // ⬇️⬇️ BUMPA denna vid VARJE ändring av index.html (se disciplin ovan). ⬇️⬇️
-const CACHE_VERSION = 'hrv-capture-v1';
+const CACHE_VERSION = 'hrv-capture-v2';
 // Prefix → activate() raderar bara MINA gamla cacher. Origin-roten
 // (1johanahlstrom-spec.github.io) kan dela andra projekt; rör inte deras.
 const CACHE_PREFIX = 'hrv-capture-';
