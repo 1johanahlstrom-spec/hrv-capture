@@ -493,6 +493,12 @@ document.addEventListener('visibilitychange', () => {
 // tillåter navigator.vibrate (andnings-haptiken). Tappen = "placera finger + börja".
 const START = document.getElementById('startBtn');
 START.addEventListener('click', () => {
+  // Bekräftelse-buzz i SJÄLVA tap-gesten (starkaste user-activation) → taktil "startad"-känsla +
+  // använder vibrationen i den garanterat aktiverade kontexten. Bara när andningsguiden är på
+  // (då fasbytes-haptiken förväntas). DIAGNOS du kan känna: buzzar start-tappen men INTE fasbytena
+  // → aktiveringen gavs men tappades senare (effekt-flödets om-launch). Sker FÖRE SETTLE/capture
+  // → noll PPG-påverkan. (Fixar den intermittenta haptik-bortfallet i "Mät effekt av guiden".)
+  if (SHOW_BREATH && navigator.vibrate) navigator.vibrate(30);
   START.style.display = 'none';
   document.getElementById('intro').style.display = 'none';   // dölj instruktionen när mätningen kör
   start();
