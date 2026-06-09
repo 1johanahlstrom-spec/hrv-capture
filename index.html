@@ -72,6 +72,8 @@
 <div id="log"></div>
 <video id="V" autoplay playsinline muted></video>
 <canvas id="C" width="32" height="24"></canvas>
+<!-- TILLFÄLLIG haptik-diagnostik (ta bort + bumpa cache när rotorsaken är fastställd). -->
+<div id="hd" style="position:fixed;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,.85);color:#0f0;font:11px/1.45 monospace;padding:7px 9px;white-space:pre-wrap;pointer-events:none"></div>
 
 <script>
 // ════════════════════════════════════════════════════════════════════════
@@ -146,6 +148,18 @@ function applyLang() {
 }
 const DUR = parseInt(_params.get('dur'), 10) || 60;
 const SHOW_BREATH = (_params.get('breath') ?? '1') !== '0';   // default på (bakåtkompat)
+// ── TILLFÄLLIG HAPTIK-DIAGNOSTIK — visar VARFÖR vibration uteblir. Ta bort + bumpa cache när löst.
+const _HD = { ret: '—', n: 0, tap: '—' };
+function hdRender(tag) {
+  const el = document.getElementById('hd'); if (!el) return;
+  const ua = navigator.userActivation;
+  el.textContent =
+    'DIAG CACHE v6  [' + tag + ']\n' +
+    'vibrateAPI=' + (typeof navigator.vibrate) + '   SHOW_BREATH=' + SHOW_BREATH + '   vis=' + document.visibilityState + '\n' +
+    'userActivation=' + (ua ? ('been=' + ua.hasBeenActive + ' active=' + ua.isActive) : 'n/a') + '\n' +
+    'startTapVibrate=' + _HD.tap + '   lastPhaseVibrate=' + _HD.ret + '   phaseAttempts=' + _HD.n;
+}
+hdRender('init');
 // EFFEKT-flöde (Mät effekt av guiden): host skickar effect=1 + estep (1/2/3). Vi EKAR dem bara
 // vidare in i deep-linken nedan — inget DSP, ingen breath-logik rörd — så native (BridgeResult-
 // Activity) vet vilket av de tre stegen som just avslutades. Saknas = vanlig mätning.
@@ -306,10 +320,14 @@ applyLang();   // sätt alla statiska texter ur valt språk (TR)
 // puls (tiotals ms); kan ge en liten rörelse-artefakt i PPG-signalen → hålls lätt.
 let lastBreathAct = null;
 function breathHaptic(act) {
-  if (!navigator.vibrate) return;
-  if (act === 'in')       navigator.vibrate([20, 40, 20]);   // di-dit = andas IN
-  else if (act === 'out') navigator.vibrate(40);             // en puls = andas UT
-  else                    navigator.vibrate(15);             // kort = håll
+  _HD.n++;                                                   // DIAG: räkna fas-haptik-försök
+  if (!navigator.vibrate) { _HD.ret = 'noAPI'; hdRender('phase'); return; }
+  let r;
+  if (act === 'in')       r = navigator.vibrate([20, 40, 20]);   // di-dit = andas IN
+  else if (act === 'out') r = navigator.vibrate(40);             // en puls = andas UT
+  else                    r = navigator.vibrate(15);             // kort = håll
+  _HD.ret = String(r);                                      // DIAG: vibrate()-retur (timer-driven)
+  hdRender('phase');
 }
 function animateBreathCircle(elapsed, patIdx, circId, labId, subId) {
   const pat = BREATH_PATTERNS[patIdx];
@@ -498,7 +516,9 @@ START.addEventListener('click', () => {
   // (då fasbytes-haptiken förväntas). DIAGNOS du kan känna: buzzar start-tappen men INTE fasbytena
   // → aktiveringen gavs men tappades senare (effekt-flödets om-launch). Sker FÖRE SETTLE/capture
   // → noll PPG-påverkan. (Fixar den intermittenta haptik-bortfallet i "Mät effekt av guiden".)
-  if (SHOW_BREATH && navigator.vibrate) navigator.vibrate(30);
+  if (SHOW_BREATH && navigator.vibrate) _HD.tap = String(navigator.vibrate(30));   // DIAG: gest-vibrate-retur
+  else _HD.tap = navigator.vibrate ? 'breathOff' : 'noAPI';
+  hdRender('tap');
   START.style.display = 'none';
   document.getElementById('intro').style.display = 'none';   // dölj instruktionen när mätningen kör
   start();
