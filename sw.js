@@ -14,6 +14,7 @@
 //   • DSP/SQI/gate: körs native i APK:n, aldrig här.
 //   • DAL (.well-known/assetlinks.json): undantas uttryckligen i fetch-handlern
 //     nedan → DAL förblir nät-färsk även när SW:ns scope är origin-roten.
+//     Produktions-DAL uppdaterades med release-certifikatet 2026-07-04.
 //
 // CACHE-BUSTER-SAMSPEL (viktigt): TWA:n laddar `…/?t=<tidsstämpel>&
 // dur=…&breath=…` — `?t` är unik per mätning (tvingar Chrome till en FÄRSK
