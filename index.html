@@ -114,6 +114,9 @@ const I18N = {
     patterns: ['Resonance', '4-7-8', 'Box'],
     measuring: 'measuring — hold your finger still', noSignal: '✗ no signal',
     placeFinger: 'place your finger over the camera', camFail: 'Camera error: ',
+    cameraPrepTitle: 'Prepare camera',
+    cameraPrepBody: 'Allow camera access now, before the exercise starts.',
+    cameraPrepButton: 'Allow camera and continue',
     compressing: (n) => 'Compressing ' + n + ' samples…',
     done: (n, kb) => 'Done — ' + n + ' samples (' + kb + ' KB) · tap below ↓',
   },
@@ -127,12 +130,16 @@ const I18N = {
     patterns: ['Resonans', '4-7-8', 'Box'],
     measuring: 'mäter — håll fingret stilla', noSignal: '✗ ingen signal',
     placeFinger: 'lägg fingret över kameran', camFail: 'Kamerafel: ',
+    cameraPrepTitle: 'Förbered kameran',
+    cameraPrepBody: 'Tillåt kameran nu, innan övningen startar.',
+    cameraPrepButton: 'Tillåt kamera och fortsätt',
     compressing: (n) => 'Komprimerar ' + n + ' sampel…',
     done: (n, kb) => 'Klar — ' + n + ' sampel (' + kb + ' KB) · tryck nedan ↓',
   },
 };
 const LANG = (_params.get('lang') || navigator.language || 'en').slice(0, 2).toLowerCase();
 const TR = I18N[LANG] || I18N.en;   // TR (EJ T — T är timestamp-arrayen i finish())
+const CAMERA_PREP = _params.get('prepare') === 'camera';
 // Sätter alla statiska texter ur valt språk (anropas efter breathIdx definierats). Bara DOM/text.
 function applyLang() {
   document.documentElement.lang = LANG;
@@ -144,6 +151,13 @@ function applyLang() {
   document.getElementById('resultBtn').textContent = TR.showResult;
   document.getElementById('bLab').textContent = TR.phaseIn;
   document.getElementById('bPat').textContent = TR.breathPrefix + TR.patterns[breathIdx] + TR.breathSwitch;
+  if (CAMERA_PREP) {
+    document.title = TR.cameraPrepTitle;
+    document.getElementById('bpmNum').textContent = '✓';
+    document.getElementById('bpmUnit').textContent = '';
+    document.getElementById('intro').innerHTML = '<div class="iLine">' + TR.cameraPrepBody + '</div>';
+    document.getElementById('startBtn').textContent = TR.cameraPrepButton;
+  }
 }
 const DUR = parseInt(_params.get('dur'), 10) || 60;
 const SHOW_BREATH = (_params.get('breath') ?? '1') !== '0';   // default på (bakåtkompat)
@@ -382,6 +396,19 @@ async function start() {
   requestAnimationFrame(tick);
 }
 
+// HRR-förkontroll: begär webb-originens kamerabehörighet FÖRE övningen. Ingen
+// mätdata samlas in; spåret stoppas direkt och native-flödet återupptas.
+async function prepareCameraPermission() {
+  try {
+    const prepStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    prepStream.getTracks().forEach(t => t.stop());
+    location.href = 'ritmova://camera-ready';
+  } catch (e) {
+    START.style.display = 'block';
+    SUB.textContent = TR.camFail + e.name;
+  }
+}
+
 // Egen jämn graf-timer (~15fps, fast intervall) — frikopplad från capture-loopens jitter.
 // Stannar när mätningen avslutas (fired).
 let graphTimer = null;
@@ -500,7 +527,7 @@ START.addEventListener('click', () => {
   // (Ingen webb-vibrate här — native äger haptiken; den fungerar även i Mute/Stör-ej.)
   START.style.display = 'none';
   document.getElementById('intro').style.display = 'none';   // dölj instruktionen när mätningen kör
-  start();
+  if (CAMERA_PREP) prepareCameraPermission(); else start();
 });
 </script>
 <script>
