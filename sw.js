@@ -12,10 +12,10 @@
 //     Service-workers avlyssnar bara http(s) → den går rakt till OS/native,
 //     aldrig genom denna SW. Dataflödet till native är strukturellt orört.
 //   • DSP/SQI/gate: körs native i APK:n, aldrig här.
-//   • DAL (.well-known/assetlinks.json): ligger på origin-ROTEN, UTANFÖR denna
-//     SW:s scope (/hrv-capture/) → SW:n ser den aldrig → DAL förblir nät-färsk.
+//   • DAL (.well-known/assetlinks.json): undantas uttryckligen i fetch-handlern
+//     nedan → DAL förblir nät-färsk även när SW:ns scope är origin-roten.
 //
-// CACHE-BUSTER-SAMSPEL (viktigt): TWA:n laddar `…/hrv-capture/?t=<tidsstämpel>&
+// CACHE-BUSTER-SAMSPEL (viktigt): TWA:n laddar `…/?t=<tidsstämpel>&
 // dur=…&breath=…` — `?t` är unik per mätning (tvingar Chrome till en FÄRSK
 // navigering så window.load fyrar → ny capture). Därför MÅSTE matchningen nedan
 // använda { ignoreSearch:true } — annars missar cachen ALLTID (URL:en upprepas
@@ -35,18 +35,15 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 // ⬇️⬇️ BUMPA denna vid VARJE ändring av index.html (se disciplin ovan). ⬇️⬇️
-const CACHE_VERSION = 'hrv-capture-v7';
-// Prefix → activate() raderar bara MINA gamla cacher. Origin-roten
-// (1johanahlstrom-spec.github.io) kan dela andra projekt; rör inte deras.
+const CACHE_VERSION = 'hrv-capture-v8';
+// Prefix → activate() raderar bara capture-appens gamla cacher.
 const CACHE_PREFIX = 'hrv-capture-';
 
-// Scope-sökväg härledd ur sw.js:ens egen URL (robust mot repo-byte):
-// self.location = '…/hrv-capture/sw.js' → SCOPE_PATH = '/hrv-capture/'.
+// Scope-sökväg härledd ur sw.js:ens egen URL (på custom-domänen är den '/').
 const SCOPE_PATH = self.location.pathname.replace(/sw\.js$/, '');
-const SW_PATH = self.location.pathname; // '/hrv-capture/sw.js'
+const SW_PATH = self.location.pathname; // '/sw.js'
 
-// Precache: den navigerade sidan. Både dir-index ('/hrv-capture/') OCH
-// '/hrv-capture/index.html' — samma fil, men täcker båda sätten den kan begäras.
+// Precache: den navigerade sidan. Både dir-index ('/') och '/index.html'.
 const PRECACHE_URLS = ['./', './index.html'];
 
 // ── INSTALL: precacha sidan ─────────────────────────────────────────────────
@@ -81,7 +78,8 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return; // bara GET
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // cross-origin → orört
-  if (!url.pathname.startsWith(SCOPE_PATH)) return; // utanför scope (assetlinks m.m.) → orört
+  if (!url.pathname.startsWith(SCOPE_PATH)) return; // utanför scope → orört
+  if (url.pathname.startsWith('/.well-known/')) return; // DAL måste alltid gå direkt till nätet
   if (url.pathname === SW_PATH) return; // ALDRIG cacha sw.js (uppdateringar måste vara färska)
   event.respondWith(cacheFirst(req));
 });
