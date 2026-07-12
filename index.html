@@ -174,7 +174,9 @@ const GRAPH_DELAY = 2.5;
 let raw = [], rawG = [], rawB = [], ts = [];
 let fps = 30, t0 = 0, stm = null, wl = null, fired = false;
 // Mät-mätare-state: finger-status (clearar BPM när fingret lyfts), EMA-utjämnad BPM, ringomkrets.
-let fingerOk = false, bpmEma = null;
+let fingerOk = false, bpmEma = null, lastBpmUiMs = 0;
+const BPM_UI_INTERVAL_MS = 1000; // siffran får ändras högst en gång per sekund
+const BPM_UI_ALPHA = 0.15;       // långsammare display-EMA; påverkar INTE native slutresultat
 const RING_C = 2 * Math.PI * 54;
 
 function log(m) { LOG.textContent += m + '\n'; }
@@ -290,10 +292,13 @@ function liveBpm(sig, fsv) {
   return (bpm >= 35 && bpm <= 200) ? bpm : null;
 }
 function updateBpm(filt) {
-  if (!fingerOk) { bpmEma = null; BPMN.textContent = '--'; return; }
+  if (!fingerOk) { bpmEma = null; lastBpmUiMs = 0; BPMN.textContent = '--'; return; }
+  const now = performance.now();
+  if (lastBpmUiMs && now - lastBpmUiMs < BPM_UI_INTERVAL_MS) return;
   const b = liveBpm(filt, fps);
   if (b == null) return;                          // behåll senaste visade tills nästa giltiga
-  bpmEma = bpmEma == null ? b : bpmEma * 0.7 + b * 0.3;
+  lastBpmUiMs = now;
+  bpmEma = bpmEma == null ? b : bpmEma * (1 - BPM_UI_ALPHA) + b * BPM_UI_ALPHA;
   BPMN.textContent = Math.round(bpmEma);
 }
 
