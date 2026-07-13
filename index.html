@@ -174,6 +174,11 @@ const SHOW_BREATH = (_params.get('breath') ?? '1') !== '0';   // default på (ba
 // Activity) vet vilket av de tre stegen som just avslutades. Saknas = vanlig mätning.
 const EFFECT = _params.get('effect');
 const ESTEP  = _params.get('estep');
+// MÄTNINGENS BILJETT. Native lottar ett token vid launch och skickar det som ?sig=; vi ekar tillbaka
+// det i deep-linken. `hrvresult`-schemat är exporterat + BROWSABLE (Chrome måste kunna avfyra det),
+// så utan biljetten kunde vilken webbsida som helst navigera till hrvresult://done?rri=… och få en
+// påhittad mätning auto-sparad i användarens historik + Health Connect. Se native CaptureConfig.
+const SIG = _params.get('sig') || '';
 // Grafen börjar ritas först GRAPH_DELAY s efter capture-start (utöver SETTLE) så filter-
 // kallstarts-transienten (stora initiala peaken) hinner passera ut ur det visade fönstret.
 const GRAPH_DELAY = 2.5;
@@ -502,7 +507,8 @@ async function finish(manual) {
   SUB.textContent = TR.compressing(n);
   const enc = await gzipB64url(payload);
   const effectQ = EFFECT ? ('&effect=' + EFFECT + '&estep=' + ESTEP) : '';
-  const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2) + '&dur=' + DUR + effectQ;
+  const sigQ = SIG ? ('&sig=' + encodeURIComponent(SIG)) : '';
+  const url = 'hrvresult://raw?d=' + enc.b64 + '&n=' + n + '&csum=' + csum + '&fps=' + fps.toFixed(2) + '&dur=' + DUR + effectQ + sigQ;
 
   log('payload n=' + n + ' gz=' + enc.gz + 'B b64=' + enc.b64.length + 'B csum=' + csum);
   SUB.textContent = TR.done(n, (enc.b64.length / 1024 | 0));
@@ -552,7 +558,8 @@ function abortMeasurement(reason) {
   SUB.textContent = TR.aborted;
   const back = document.getElementById('abortBtn');
   back.textContent = TR.abortBack;
-  back.setAttribute('href', 'hrvresult://cancel');
+  // Biljetten måste med — bryggan avvisar deep-links utan giltig `sig` (se native CaptureConfig).
+  back.setAttribute('href', 'hrvresult://cancel' + (SIG ? '?sig=' + encodeURIComponent(SIG) : ''));
   back.style.display = 'block';
   log('ABORT: ' + reason);
 }
