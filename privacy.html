@@ -19,7 +19,7 @@
 <body>
 <main>
   <h1>Integritetspolicy – Ritmova</h1>
-  <p class="updated">Senast uppdaterad: 4 juli 2026</p>
+  <p class="updated">Senast uppdaterad: 13 juli 2026</p>
 
   <h2>Kort sammanfattning</h2>
   <p>Ritmova mäter puls och hjärtfrekvensvariabilitet (HRV) med telefonens kamera
@@ -37,21 +37,37 @@
     <li><strong>Kamera:</strong> Den bakre kameran och ficklampan används för optisk
       pulsmätning. Bilder behandlas i realtid och reduceras till ljusvärden.
       Bilder och video sparas inte.</li>
-    <li><strong>Mätvärden:</strong> Appen kan lokalt spara puls, HRV-mått,
+    <li><strong>HRV-mätningar:</strong> Appen kan lokalt spara puls, HRV-mått,
       frekvensmått, andningsfrekvens, signalkvalitet, tidpunkt och mätlängd.</li>
-    <li>Appen samlar inte in namn, plats, kontakter, annons-ID eller enhets-ID.</li>
+    <li><strong>Pulsåterhämtning:</strong> Kör du ett återhämtningstest sparas testets
+      protokoll och inställningar, högsta puls, pulsen efter 60 (och ev. 120) sekunder,
+      återhämtningsvärdet och pulskurvan.</li>
+    <li><strong>Readiness-check-in:</strong> Fyller du i den dagliga check-in:en sparas dina
+      egna skattningar av <strong>sömnkvalitet, muskelvärk och stress</strong> (skala 1–5)
+      och dagens readiness-poäng. Detta är uppgifter du själv anger om ditt mående. De
+      lagras bara lokalt och delas aldrig — inte heller till Health Connect.</li>
+    <li><strong>Lokal kraschlogg:</strong> Om appen kraschar skrivs en teknisk logg (feltyp,
+      anropsstack, appversion, Android-version, telefonmodell) till en fil på enheten. Den
+      innehåller inga mätvärden och skickas aldrig automatiskt — du kan välja att dela eller
+      radera den i Inställningar.</li>
+    <li>Appen samlar inte in namn, plats, kontakter, annons-ID eller enhets-ID och har inget
+      användarkonto.</li>
   </ul>
 
   <h2>Lagring</h2>
-  <p>Mätningar sparas i appens privata lagringsutrymme på enheten. Om du frivilligt
-    aktiverar Health Connect och ger behörighet kan godkända puls- och HRV-värden
-    skrivas dit. Du styr Health Connect och vilka andra appar som får läsa datan.</p>
+  <p>Mätningar, återhämtningstester och readiness-poster sparas i en databas i appens privata
+    lagringsutrymme på enheten, som bara appen kan läsa. Om du frivilligt aktiverar Health
+    Connect och ger behörighet kan godkända puls- och HRV-värden skrivas dit. Du styr Health
+    Connect och vilka andra appar som får läsa datan. Readiness-check-in och
+    återhämtningstester skrivs inte till Health Connect.</p>
 
   <h2>Vad som lämnar enheten</h2>
-  <p>Ingen mätdata eller hälsodata skickas automatiskt från enheten. Mätskärmen
-    laddas som en webbsida i Chrome, men kamera-, hälso- och persondata skickas
-    inte till servern. Om du själv väljer CSV-export bestämmer du mottagaren via
-    Androids delningsmeny.</p>
+  <p>Ingen mät- eller hälsodata skickas automatiskt från enheten. Appen har ingen
+    internet-behörighet och innehåller ingen analys-, spårnings- eller annonsteknik och ingen
+    fjärr-kraschrapportering — kraschloggen ovan är helt lokal, just för att appen inte ska
+    behöva internetåtkomst. Mätskärmen laddas som en webbsida i Chrome, men kamera-, hälso-
+    och persondata skickas inte till servern. Väljer du själv CSV-export eller att dela
+    kraschloggen bestämmer du mottagaren via Androids delningsmeny.</p>
 
   <h2>Säkerhetskopiering</h2>
   <p>Om Androids automatiska säkerhetskopiering är aktiverad kan appdata ingå i
@@ -59,10 +75,15 @@
     styrs av Android och ditt Google-konto.</p>
 
   <h2>Radering och behörigheter</h2>
-  <p>Du kan radera enskilda mätningar i historiken, återkalla Health Connect-
-    behörigheter eller avinstallera appen för att radera lokal appdata. Kamera
-    och förgrundstjänst behövs för mätningen. Health Connect-behörigheter är
-    valfria.</p>
+  <p>Du kan radera enskilda mätningar i historiken, radera kraschloggen i Inställningar,
+    återkalla Health Connect-behörigheter, eller avinstallera appen — då tas all lokal
+    appdata bort (mätningar, återhämtningstester, readiness-check-in, inställningar och
+    kraschlogg).</p>
+  <p>Kamera och förgrundstjänst behövs för mätningen. Vibration används till andningsguidens
+    haptik (kan stängas av). Notiser och "starta vid omstart" används enbart om du slår på
+    den dagliga påminnelsen — det senare bara för att lägga tillbaka påminnelsen efter en
+    omstart. Health Connect-behörigheter är valfria. Appen har medvetet inte
+    internet-behörighet.</p>
 
   <h2>Barn och medicinsk användning</h2>
   <p>Appen riktar sig inte särskilt till barn och samlar inte medvetet in data
