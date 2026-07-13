@@ -304,13 +304,28 @@ function liveBpm(sig, fsv) {
   const bpm = 60 / iv[iv.length >> 1];
   return (bpm >= 35 && bpm <= 200) ? bpm : null;
 }
+// Hur länge en visad siffra får överleva utan en ny giltig skattning innan vi visar '--'.
+const BPM_STALE_MS = 4000;
+let lastGoodBpmMs = 0;
+
 function updateBpm(filt) {
-  if (!fingerOk) { bpmEma = null; lastBpmUiMs = 0; BPMN.textContent = '--'; return; }
+  if (!fingerOk) { bpmEma = null; lastBpmUiMs = 0; lastGoodBpmMs = 0; BPMN.textContent = '--'; return; }
   const now = performance.now();
   if (lastBpmUiMs && now - lastBpmUiMs < BPM_UI_INTERVAL_MS) return;
   const b = liveBpm(filt, fps);
-  if (b == null) return;                          // behåll senaste visade tills nästa giltiga
+  if (b == null) {
+    // ⚠️ TIDIGARE: `return` här → den senast visade siffran låg kvar för ALLTID. liveBpm:s tröskel
+    // är RELATIV till fönstrets max, så en enda rörelsespik trycker ner den under alla riktiga
+    // peaks → null varje gång → siffran FRÖS på ett gammalt värde utan att användaren märkte det.
+    // Att stirra på en död siffra under en mätning är precis den sortens tysta lögn appens
+    // kvalitetsgate finns för att undvika. Nu faller den tillbaka till '--'.
+    if (lastGoodBpmMs && now - lastGoodBpmMs > BPM_STALE_MS) {
+      bpmEma = null; lastGoodBpmMs = 0; BPMN.textContent = '--';
+    }
+    return;
+  }
   lastBpmUiMs = now;
+  lastGoodBpmMs = now;
   bpmEma = bpmEma == null ? b : bpmEma * (1 - BPM_UI_ALPHA) + b * BPM_UI_ALPHA;
   BPMN.textContent = Math.round(bpmEma);
 }

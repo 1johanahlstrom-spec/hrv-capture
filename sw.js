@@ -36,7 +36,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 // ⬇️⬇️ BUMPA denna vid VARJE ändring av index.html (se disciplin ovan). ⬇️⬇️
-const CACHE_VERSION = 'hrv-capture-v12';
+const CACHE_VERSION = 'hrv-capture-v13';
 // Prefix → activate() raderar bara capture-appens gamla cacher.
 const CACHE_PREFIX = 'hrv-capture-';
 
