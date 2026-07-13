@@ -41,6 +41,9 @@
   /* Redirect-robusthet: tappbar resultat-länk vid mätslut → färsk user-gesture. */
   #resultBtn{display:none;margin-top:14px;padding:18px 16px;background:#00F082;color:#08090C;
     font-size:21px;font-weight:bold;text-align:center;text-decoration:none;border-radius:14px}
+  /* Avbruten mätning → ren väg tillbaka till appen (dämpad, ej en "klar"-grön CTA). */
+  #abortBtn{display:none;margin-top:14px;padding:16px;background:#171A21;color:#E8EAED;
+    border:1px solid #00F08255;font-size:18px;text-align:center;text-decoration:none;border-radius:14px}
   /* Video körs (getUserMedia → capture) men VISAS EJ — 1px offscreen (ej display:none, som
      kan stoppa frame-leverans i Chrome). Vågformen ger den visuella feedbacken istället. */
   #V{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1}
@@ -65,10 +68,11 @@
   <div id="bCirc"></div>
   <div id="bLab">Breathe in</div>
   <div id="bSub">5s</div>
-  <div id="bPat">Breathing: Resonance · tap to switch</div>
+  <div id="bPat">Breathing: Resonance</div>
 </div>
 <button id="stopBtn">⏹ Stop measurement</button>
 <a id="resultBtn" href="#">Show result →</a>
+<a id="abortBtn" href="#">Back to Ritmova →</a>
 <div id="log"></div>
 <video id="V" autoplay playsinline muted></video>
 <canvas id="C" width="32" height="24"></canvas>
@@ -109,7 +113,9 @@ const I18N = {
     intro1: '• Place your fingertip lightly over the <b>camera and flash</b>',
     intro2: '• Hold your finger <b>still</b> during the measurement. Rest your hand on a table.',
     start: '▶ Tap to start', stop: '⏹ Stop measurement', showResult: 'Show result →',
-    breathPrefix: 'Breathing: ', breathSwitch: ' · tap to switch',
+    breathPrefix: 'Breathing: ',
+    aborted: 'Measurement cancelled — the camera was released when you left the app.',
+    abortBack: 'Back to Ritmova →',
     phaseIn: 'Breathe in', phaseOut: 'Breathe out', phaseHold: 'Hold',
     patterns: ['Resonance', '4-7-8', 'Box'],
     measuring: 'measuring — hold your finger still', noSignal: '✗ no signal',
@@ -125,7 +131,9 @@ const I18N = {
     intro1: '• Lägg pekfingret lätt över <b>kamera och lampa</b>',
     intro2: '• Håll fingret <b>stilla</b> under mätning. Vila gärna handen på ett bord.',
     start: '▶ Tryck för att börja', stop: '⏹ Stoppa mätning', showResult: 'Visa resultat →',
-    breathPrefix: 'Andning: ', breathSwitch: ' · tryck för att byta',
+    breathPrefix: 'Andning: ',
+    aborted: 'Mätningen avbröts — kameran släpptes när du lämnade appen.',
+    abortBack: 'Tillbaka till Ritmova →',
     phaseIn: 'Andas in', phaseOut: 'Andas ut', phaseHold: 'Håll',
     patterns: ['Resonans', '4-7-8', 'Box'],
     measuring: 'mäter — håll fingret stilla', noSignal: '✗ ingen signal',
@@ -150,7 +158,7 @@ function applyLang() {
   document.getElementById('stopBtn').textContent = TR.stop;
   document.getElementById('resultBtn').textContent = TR.showResult;
   document.getElementById('bLab').textContent = TR.phaseIn;
-  document.getElementById('bPat').textContent = TR.breathPrefix + TR.patterns[breathIdx] + TR.breathSwitch;
+  document.getElementById('bPat').textContent = TR.breathPrefix + TR.patterns[breathIdx];
   if (CAMERA_PREP) {
     document.title = TR.cameraPrepTitle;
     document.getElementById('bpmNum').textContent = '✓';
@@ -371,10 +379,11 @@ function updateBreath() {
   if (elapsed < SETTLE) return;        // animera först när mätningen är aktiv
   animateBreathCircle(elapsed - SETTLE, breathIdx, 'bCirc', 'bLab', 'bSub');
 }
-document.getElementById('breath').addEventListener('click', () => {
-  breathIdx = (breathIdx + 1) % BREATH_PATTERNS.length;
-  document.getElementById('bPat').textContent = TR.breathPrefix + TR.patterns[breathIdx] + TR.breathSwitch;
-});
+// ⚠️ TAP-TO-SWITCH BORTTAGEN (2026-07-13). Den bytte mönster BARA på webbsidan — native
+// TorchForegroundService fortsatte vibrera det mönster som skickades vid launch (`?bpat`), så
+// den visuella guiden och haptiken gick isär (cirkeln körde Box medan telefonen buzzade 4-7-8).
+// Det finns ingen kanal tillbaka till native. Mönstret väljs på startskärmen (IdleScreen-chipsen)
+// = enda källan till sanning; sidan speglar bara valet.
 
 async function start() {
   try { wl = await navigator.wakeLock.request('screen'); } catch (_) {}
@@ -388,13 +397,19 @@ async function start() {
   }
   const tk = stm.getVideoTracks()[0], se = tk.getSettings();
   fps = se.frameRate || 30;
+  // KAMERATAPP: tar en annan app kameran (eller OS:et avbryter) slutar <video> få nya bilder —
+  // men tick() fortsätter läsa SISTA kvarvarande frame och pushar en konstant R/G/B-sekvens som
+  // om den vore riktiga sampel (fingerdetektionen säger fortfarande "ok" på en fryst röd bild).
+  // En platt sträcka klistras då in mitt i payloaden och native ser bara "fina" sampel.
+  // `ended` fyras INTE av vår egen track.stop() (per spec) → ingen krock med finish()/abort.
+  tk.addEventListener('ended', () => abortMeasurement('camera track ended'));
   SUB.textContent = TR.measuring;
   V.srcObject = stm; await V.play();
   STOP.style.display = 'block';
   if (SHOW_BREATH) {
     document.getElementById('breath').style.display = 'flex';   // visa andningsguide (om vald)
     // Sätt etiketten till det VALDA mönstret (annars stod hårdkodad "Resonans" tills man tappade).
-    document.getElementById('bPat').textContent = TR.breathPrefix + TR.patterns[breathIdx] + TR.breathSwitch;
+    document.getElementById('bPat').textContent = TR.breathPrefix + TR.patterns[breathIdx];
   }
   t0 = performance.now();
   startGraphLoop();
@@ -512,12 +527,40 @@ STOP.addEventListener('click', () => { finish(true); });   // manuell stopp (fä
 // bakgrundande Chrome (device-bevisat: lampan slocknade först på 65s-fönstret). Kamera-frigörning
 // funkar utan foreground. `fired` = mätningen redan klar (finish() stoppar redan tracket) → hoppa
 // över. `leftOnce` = en gång. Återkomst: capturen är död (torch släckt) → avbrott = avbrott.
+// ⚠️ TIDIGARE LÖG SIDAN HÄR. Den släppte kameran men satte varken `fired` eller stoppade
+// graf-timern → tick() dog tyst (den returnerar när stm===null), auto-stoppet kunde ALDRIG
+// inträffa, men RINGEN FORTSATTE FYLLAS och statusraden stod kvar på "mäter". Kom användaren
+// tillbaka såg sidan levande ut, och ett tryck på Stopp skickade en TRUNKERAD mätning med
+// dur=DUR — native trodde den fått en full 60/300-sekundersmätning.
+//
+// Nu erkänner sidan avbrottet: mätningen är död (torchen är redan släckt av host-FGS när
+// kameran frigjordes), så vi säger det och erbjuder en ren väg tillbaka. `hrvresult://cancel`
+// hanteras redan native (BridgeResultActivity: rensar Effect-/HRR-session och stänger). Länken
+// funkar eftersom den trycks när Chrome är i FÖRGRUNDEN igen (färsk gest, ingen BAL-blockering
+// — därför navigerar vi INTE härifrån automatiskt vid `hidden`).
 let leftOnce = false;
+function abortMeasurement(reason) {
+  if (fired || leftOnce) return;
+  leftOnce = true;
+  fired = true;                       // stoppar graf-loopen och gör finish() till en no-op
+  if (stm) { stm.getTracks().forEach(t => t.stop()); stm = null; }
+  if (wl) { try { wl.release(); } catch (_) {} wl = null; }
+  if (graphTimer) { clearInterval(graphTimer); graphTimer = null; }
+  STOP.style.display = 'none';
+  document.getElementById('breath').style.display = 'none';
+  RINGP.style.strokeDashoffset = RING_C;              // ringen tillbaka till noll — vi mäter inte
+  SUB.textContent = TR.aborted;
+  const back = document.getElementById('abortBtn');
+  back.textContent = TR.abortBack;
+  back.setAttribute('href', 'hrvresult://cancel');
+  back.style.display = 'block';
+  log('ABORT: ' + reason);
+}
+
+// Sidan blir dold (hemsvep, app-byte) → kameran frigörs → host-FGS ser det och släcker torchen.
+// Mätningen är därmed över, oavsett vad användaren gör sen.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && !fired && !leftOnce) {
-    leftOnce = true;
-    if (stm) { stm.getTracks().forEach(t => t.stop()); stm = null; }
-  }
+  if (document.visibilityState === 'hidden') abortMeasurement('page hidden');
 });
 
 // Tap-to-start: mätningen börjar på en tap PÅ SIDAN (ej auto) = "placera finger + börja".
